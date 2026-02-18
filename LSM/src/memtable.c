@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <zlib.h>
  
 #include "../lib/rbtree.h"
 #include "../lib/memtable.h"
@@ -36,12 +40,13 @@ static int store_segment_count(uint64_t next_id) {
   return ok ? 0 : -1;
 }
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <zlib.h>
-
 #define FRAME_MAGIC 0x4C534D31u  // "LSM1"
+
+static int ensure_dir(const char *path) {
+  if (mkdir(path, 0755) == 0) return 0;
+  if (errno == EEXIST) return 0;
+  return -1;
+}
 
 static int write_frame_compressed(FILE *f, const uint8_t *src, uint32_t src_len) {
   // Worst-case bound for zlib
@@ -106,6 +111,11 @@ void flush(Memtable *m) {
   char path[256];
   uint64_t id = m->next_segment_id++;
   snprintf(path, sizeof(path), SEGMENT_FILE_FMT, (unsigned long long)id);
+
+  if (ensure_dir("segments") != 0) {
+    perror("mkdir segments");
+    return;
+  }
 
   FILE *segment = fopen(path, "wb");
   if (!segment) {

@@ -42,7 +42,6 @@
       installPhase = ''
         runHook preInstall
         mkdir -p $out/bin
-        mkdir -p $out/segments
         install -m755 bin/app $out/bin/app
 
         runHook postInstall
