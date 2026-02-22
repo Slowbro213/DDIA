@@ -47,6 +47,21 @@
         runHook postInstall
       '';
     };
+
+     checks.${system}.unit = pkgs.stdenv.mkDerivation {
+      pname = "memtable-tests";
+      version = "0.1.0";
+      src = ./.;
+
+      nativeBuildInputs = with pkgs; [ gnumake pkg-config ];
+      buildInputs = with pkgs; [ zlib ];
+
+      buildPhase = "make";
+      checkPhase = "make test";
+      doCheck = true;
+
+      installPhase = "mkdir -p $out; touch $out/passed";
+    };
   };
 }
 

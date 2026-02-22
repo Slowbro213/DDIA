@@ -63,7 +63,7 @@ static inline int value_len_at(const char *base, size_t i, size_t stride) {
   return (int)strlen(p) + 1;
 }
 
-int main(void) {
+int rbtree_test(void) {
   RBNode *nodes = (RBNode *)malloc(sizeof(RBNode) * (SIZE + EXTRA));
   Value  *values = (Value *)calloc((SIZE + EXTRA), sizeof(Value));
   RBTree *t = (RBTree *)malloc(sizeof(RBTree));

@@ -13,7 +13,7 @@ typedef struct {
 
   uint8_t  buf[MT_BUF_CAP];
   size_t   buf_len;
-  unsigned long long next_segment_id;
+  int total_size;
 } Memtable;
 
 
@@ -21,8 +21,6 @@ void mt_init(Memtable* m, RBNode* nodes, Value *values, int size, bool owns_valu
 Value* mt_get(Memtable *m,long key);
 bool mt_put(Memtable *m, long key, const char *value, int length);
 bool mt_delete(Memtable *m, long key);
-void flush(Memtable *m);
-
 
 
 #endif
