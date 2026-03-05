@@ -19,6 +19,17 @@ impl fmt::Display for Type {
     }
 }
 
+impl From<&str> for Type {
+    fn from(s: &str) -> Self {
+        match s {
+            "string" => Type::String,
+            "uint32" => Type::Uint32,
+            "uint64" => Type::Uint64,
+            _ => panic!("Invalid Type"),
+        }
+    }
+}
+
 struct Field {
     typ: Type,
     name: String,
@@ -45,15 +56,95 @@ impl fmt::Display for Message {
     }
 }
 
-fn read_message(contents: &str, offset: usize) -> Message {
-    return Message {
-        name: String::from("Test"),
-        fields: vec![Field {
-            typ: Type::String,
-            name: String::from("thanas"),
-            alias: 1,
-        }],
-    };
+struct Fn {
+    name: String,
+    arg: Message,
+    ret: Message,
+}
+impl fmt::Debug for Fn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "(name: {}; arg: {}; ret: {})",
+            self.name, self.arg, self.ret
+        )
+    }
+}
+
+struct Service {
+    name: String,
+    rpcs: Vec<Fn>,
+}
+
+impl fmt::Display for Service {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({},{:?})", self.name, self.rpcs)
+    }
+}
+
+fn read_message<'a>(iter: &mut impl Iterator<Item = &'a str>) -> Option<Message> {
+    let name = iter.next()?;
+    let mut fields: Vec<Field> = Vec::new();
+
+    loop {
+        let w = iter.next()?;
+        match w {
+            "}" => break,
+            "{" => (),
+            word => {
+                let typ = word;
+                let name = iter.next()?;
+                iter.next()?;
+                let alias_word: &str = iter.next()?;
+                let alias: u32 = match alias_word[..1].parse() {
+                    Ok(a) => a,
+                    Err(e) => panic!("Failed to convert string to alias {e} {alias_word}"),
+                };
+                let field = Field {
+                    typ: Type::from(typ),
+                    name: String::from(name),
+                    alias: alias,
+                };
+                fields.push(field);
+            }
+        }
+    }
+
+    return Some(Message {
+        name: String::from(name),
+        fields: fields,
+    });
+}
+
+fn read_service<'a>(iter: &mut impl Iterator<Item = &'a str>) -> Option<Service> {
+    let name = iter.next()?;
+    let mut fields: Vec<Field> = Vec::new();
+
+    loop {
+        let w = iter.next()?;
+        match w {
+            "}" => break,
+            "{" => (),
+            _ => {
+                let func_def = iter.next()?;
+                let mut fn_iter = func_def.split("(|)");
+                let fn_name = fn_iter.next()?;
+                fn_iter.next()?;
+                let fn_arg = fn_iter.next()?;
+
+                let func_def = iter.next()?;
+                let mut fn_iter = func_def.split("(|)");
+                fn_iter.next()?;
+                let fn_ret = fn_iter.next()?;
+                let fn = Fn{ name: String::from(fn_name), arg: fn_arg, ret: fn_ret  };
+            }
+        }
+    }
+
+    return Some(Service {
+        name: String::from(name),
+        rpcs: vec![],
+    });
 }
 
 fn main() {
@@ -65,20 +156,37 @@ fn main() {
         fs::read_to_string(path).expect("Should have been able to read the file");
 
     let mut messages: Vec<Message> = Vec::new();
+    let mut services: Vec<Service> = Vec::new();
 
-    let length = contents.len();
-    let mut i: usize = 0;
-    while i + 7 < length - 1 {
-        let keyword = &contents[i..i + 7];
-        match keyword {
-            "service" => println!("Found select\n"),
-            "message" => messages.push(read_message(&contents[i..], i)),
-            _ => (),
+    let mut word_iter = contents.split_whitespace();
+
+    loop {
+        let c = word_iter.next();
+        match c {
+            Some(c) => match c {
+                "message" => match read_message(&mut word_iter) {
+                    Some(m) => messages.push(m),
+                    None => (),
+                },
+                "service" => match read_service(&mut word_iter) {
+                    Some(s) => services.push(s),
+                    None => (),
+                },
+                _ => (),
+            },
+            None => break,
         }
-        i += 1;
     }
 
-    for message in messages {
-        println!("{message}\n");
+    if messages.len() == 0 && services.len() == 0 {
+        panic!("No Keywords Found");
+    }
+
+    for m in messages {
+        println!("{m}\n");
+    }
+
+    for s in services {
+        println!("{s}\n");
     }
 }
