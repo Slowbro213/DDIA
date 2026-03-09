@@ -366,24 +366,18 @@ fn write_varint(mut value: u64, writer: &mut dyn Write) -> io::Result<()> {{
 }}
 
 fn read_varint(reader: &mut dyn Read) -> io::Result<u64> {{
-    let mut result = 0u64;
-    let mut shift = 0u32;
+    let mut result: u64 = 0x00;
 
     loop {{
         let mut buf = [0u8; 1];
         reader.read_exact(&mut buf)?;
         let byte = buf[0];
-
-        result |= ((byte & 0x7f) as u64) << shift;
-
-        if (byte & 0x80) == 0 {{
+        
+        result |= ( byte & 0x7f ) as u64;
+        if byte >> 7 == 0 {{
             break;
         }}
-
-        shift += 7;
-        if shift >= 64 {{
-            return Err(io::Error::new(io::ErrorKind::InvalidData, \"varint too large\"));
-        }}
+        result <<= 7;
     }}
 
     Ok(result)
