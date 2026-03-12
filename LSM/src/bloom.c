@@ -45,3 +45,9 @@ bool bloom_has(Bloom *b, long key) {
     }
     return true;
 }
+
+void bloom_init(Bloom *b, uint8_t *bitmasks, size_t nbytes, uint32_t k){
+  b->bitmasks = bitmasks;
+  b->nbytes = nbytes;
+  b->k = k;
+}

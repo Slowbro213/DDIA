@@ -1,15 +1,15 @@
+#include <cstdint>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#include <errno.h>
 #include <zlib.h>
 
 #include "../lib/lsm.h"
 #include "../lib/memtable.h"
-#include "../lib/sstable.h.h"
-#include "../lib/rbtree.h.h"
+#include "../lib/sstable.h"
+#include "../lib/rbtree.h"
 
 #define BLOCK_SIZE ( 1 << 16 )
 
@@ -138,6 +138,11 @@ void flush(LSM *l) {
 
   int sp = 0;
   int cur = t->root_idx;
+  uint32_t size = 0;
+  bool is_first = true;
+  long offset = 0;
+  long key;
+  int next_key_idx = 0;
 
   while (cur != 0 || sp > 0) {
     while (cur != 0) {
@@ -148,6 +153,9 @@ void flush(LSM *l) {
 
     RBNode *n = &t->nodes[cur];
     Value  *v = &t->values[cur];
+    if(is_first){
+      key = n->key;
+    }
 
     int32_t len = n->tombstone ? -1 : (int32_t)v->length;
 
@@ -158,6 +166,17 @@ void flush(LSM *l) {
       if (buf_append(l, id, segment, v->value, (size_t)len) != 0) { perror("buf_append val"); break; }
     }
 
+    size = ftell(segment) - size;
+
+    if (size >= BLOCK_SIZE){
+      size=0;
+      keys[next_key_idx] = key;
+      offsets[next_key_idx] = offset;
+      sst->length++;
+      offset = ftell(segment);
+      key = n->key;
+    }
+
     cur = n->right_idx;
   }
 
@@ -165,6 +184,10 @@ void flush(LSM *l) {
 
   if (flush_buf_if_nonempty(m, segment) != 0) {
     perror("flush_buf_if_nonempty");
+  } else {
+      keys[next_key_idx] = key;
+      offsets[next_key_idx] = offset;
+      sst->length++;
   }
 
   if (fflush(segment) != 0) perror("fflush");
