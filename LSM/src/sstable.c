@@ -14,28 +14,45 @@ void sstable_init(SSTable *sst, long *keys, long *offsets){
 
 static const char* segment_get(SSTable *sst, FILE *segment, int idx){
   long offset = sst->offsets[idx];
+  uint32_t src_len;
+  uint8_t src_buf[src_len];
+  long size;
 
   if(idx == sst->length-1){
+    unsigned long long file_size;
+    if (fseek(segment, 0, SEEK_END) == 0) { // Move pointer to the end
+      file_size = ftell(segment);
+    } else perror("segment_end_read");
+
+    size = file_size - offset;
+    fseek(segment, (size) * -1, SEEK_CUR);
 
   } else {
     long next_offset = sst->offsets[idx+1];
-    long size = next_offset - offset;
+    size = next_offset - offset;
 
     fseek(segment, offset, SEEK_CUR);
-    uint8_t buf[size];
-    if(fread(buf,1,size,segment) != size) return NULL;
+  }
 
-    uint32_t frame_magic;
-    memcpy(&frame_magic, &buf[0], sizeof(uint32_t));
+  uint8_t buf[size];
+  if(fread(buf,1,size,segment) != size) return NULL;
 
-    if(frame_magic != FRAME_MAGIC) perror("frame_magic_mismatch");
+  uint32_t frame_magic;
+  memcpy(&frame_magic, &buf[0], sizeof(uint32_t));
 
+  if(frame_magic != FRAME_MAGIC) perror("frame_magic_mismatch");
 
-    uint32_t src_len;
-    memcpy(&src_len, &buf[4], sizeof(uint32_t));
+  memcpy(&src_len, &buf[4], sizeof(uint32_t));
+  uncompress(src_buf,(uLongf *)&src_len,buf,size);
 
-    uint8_t src_buf[src_len];
-    uncompress(src_buf,(uLongf *)&src_len,buf,size);
+  long size_idx = 0;
+  while(size_idx < src_len) {
+    long key;
+    memcpy(&key, &buf[size_idx], sizeof(long));
+    size_idx += sizeof(long);
+    long value_len;
+    memcpy(&value_len, &buf[size_idx], sizeof(long));
+    size_idx += sizeof(long);
 
   }
 
