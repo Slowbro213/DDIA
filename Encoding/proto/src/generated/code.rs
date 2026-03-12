@@ -21,17 +21,18 @@ fn write_varint(mut value: u64, writer: &mut dyn Write) -> io::Result<()> {
 
 fn read_varint(reader: &mut dyn Read) -> io::Result<u64> {
     let mut result: u64 = 0x00;
+    let mut shift = 0;
 
     loop {
         let mut buf = [0u8; 1];
         reader.read_exact(&mut buf)?;
         let byte = buf[0];
         
-        result |= ( byte & 0x7f ) as u64;
+        result |= (( byte & 0x7f ) as u64) << (shift*7);
         if byte >> 7 == 0 {
             break;
         }
-        result <<= 7;
+        shift+=1;
     }
 
     Ok(result)
