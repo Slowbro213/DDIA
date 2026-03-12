@@ -1,4 +1,3 @@
-#include <cstdint>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,10 +11,6 @@
 #include "../lib/rbtree.h"
 
 #define BLOCK_SIZE ( 1 << 16 )
-
-#define SEGMENT_FILE_FMT "segments/segment_%lld.log"
-#define SEGMENT_FILE_INDEX_FMT "segments/segment_index_%lld.ser"
-#define SEGMENT_FILE_COUNT "segments/segment_count"
 
 static uint64_t load_segment_count(void) {
   FILE *f = fopen(SEGMENT_FILE_COUNT, "rb");
@@ -44,8 +39,6 @@ static int store_segment_count(uint64_t next_id) {
   return ok ? 0 : -1;
 }
 
-#define FRAME_MAGIC 0x4C534D31u  // "LSM1"
-
 static int write_frame_compressed(FILE *f, const uint8_t *src, uint32_t src_len) {
   // Worst-case bound for zlib
   uLongf dst_cap = compressBound((uLong)src_len);
@@ -53,7 +46,7 @@ static int write_frame_compressed(FILE *f, const uint8_t *src, uint32_t src_len)
   if (!dst) return -1;
 
   uLongf dst_len = dst_cap;
-  int zrc = compress2(dst, &dst_len, src, (uLong)src_len, Z_DEFAULT_COMPRESSION);
+  int zrc = compress(dst, &dst_len, src, (uLong)src_len);
   if (zrc != Z_OK) {
     free(dst);
     return -1;
@@ -117,6 +110,13 @@ void flush(LSM *l) {
     perror("fopen segment");
     return;
   }
+  snprintf(path, sizeof(path), SEGMENT_FILE_INDEX_FMT, (unsigned long long)id);
+  FILE *segment_idx = fopen(path, "wb");
+  if (!segment_idx) {
+    perror("fopen segment");
+    return;
+  }
+
 
   m->buf_len = 0;
 
@@ -142,7 +142,7 @@ void flush(LSM *l) {
   bool is_first = true;
   long offset = 0;
   long key;
-  int next_key_idx = 0;
+  int next_idx = 0;
 
   while (cur != 0 || sp > 0) {
     while (cur != 0) {
@@ -170,9 +170,7 @@ void flush(LSM *l) {
 
     if (size >= BLOCK_SIZE){
       size=0;
-      keys[next_key_idx] = key;
-      offsets[next_key_idx] = offset;
-      sst->length++;
+      if(sstable_add(sst, segment_idx, key, offset, next_idx) != true) perror("sstable_append");
       offset = ftell(segment);
       key = n->key;
     }
@@ -185,9 +183,7 @@ void flush(LSM *l) {
   if (flush_buf_if_nonempty(m, segment) != 0) {
     perror("flush_buf_if_nonempty");
   } else {
-      keys[next_key_idx] = key;
-      offsets[next_key_idx] = offset;
-      sst->length++;
+      if(sstable_add(sst, segment_idx, key, offset, next_idx) != true) perror("sstable_append");
   }
 
   if (fflush(segment) != 0) perror("fflush");
