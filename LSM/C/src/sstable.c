@@ -1,5 +1,6 @@
 #include "../lib/sstable.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <string.h>
@@ -53,7 +54,15 @@ static const char* segment_get(SSTable *sst, FILE *segment, int idx){
     long value_len;
     memcpy(&value_len, &buf[size_idx], sizeof(long));
     size_idx += sizeof(long);
-
+    if(key == sst->keys[idx]){
+      if(value_len==-1){
+        return NULL;
+      }
+      const char * value = (const char*)malloc(value_len);
+      memcpy(&value, &buf[size_idx], value_len);
+      return value;
+    }
+    size_idx += value_len;
   }
 
   return NULL;
