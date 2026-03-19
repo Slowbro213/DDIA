@@ -1,6 +1,7 @@
 [package]
-name = "rust"
+name = "lsm"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bumpalo = { version = "3.20.2", features = ["allocator_api"]}
