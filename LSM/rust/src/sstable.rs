@@ -36,6 +36,7 @@ pub struct SSTable<K: Ord> {
     _index_file: File,
     sparse_index_keys: Vec<K>,
     sparse_index_offsets: Vec<u64>,
+    sparse_index_block_sizes: Vec<usize>,
 
     buffer: Vec<u8>,
 }
@@ -46,24 +47,34 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
         index_writer: &mut BufWriter<File>,
         sparse_index_keys: &mut Vec<K>,
         sparse_index_offsets: &mut Vec<u64>,
+        sparse_index_block_sizes: &mut Vec<usize>,
+        curr_offset: usize,
         index_key: K,
         buffer: &mut Vec<u8>,
+        compression_buffer: &mut Vec<u8>,
         compression_level: i32,
-    ) -> Result<(), SSTableError> {
-        let block_offset = segment_writer.stream_position()? as u64;
-
+    ) -> Result<usize, SSTableError> {
         index_writer.write_all(index_key.to_le_bytes().as_ref())?;
-        index_writer.write_all(&block_offset.to_le_bytes())?;
+        index_writer.write_all(&curr_offset.to_le_bytes())?;
 
+        let buffer_len = buffer.len();
         sparse_index_keys.push(index_key);
-        sparse_index_offsets.push(block_offset);
+        sparse_index_offsets.push(curr_offset as u64);
+        sparse_index_block_sizes.push(buffer_len);
 
-        let compressed = bulk::compress(buffer.as_slice(), compression_level)?;
+        let bound = zstd::zstd_safe::compress_bound(buffer_len);
+        compression_buffer.resize(bound, 0);
+        let written = bulk::compress_to_buffer(
+            buffer.as_slice(),
+            compression_buffer.as_mut_slice(),
+            compression_level,
+        )?;
 
-        segment_writer.write_all(&compressed)?;
+        segment_writer.write_all(&compression_buffer[..written])?;
 
         buffer.clear();
-        Ok(())
+        compression_buffer.clear();
+        Ok(curr_offset + written)
     }
     pub fn new<V: Encode, A: Allocator + Clone>(
         segment_file: File,
@@ -73,12 +84,15 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
     ) -> Result<Self, SSTableError> {
         let mut sparse_index_keys = Vec::new();
         let mut sparse_index_offsets = Vec::new();
+        let mut sparse_index_block_sizes = Vec::new();
 
         let mut segment_writer = BufWriter::new(segment_file);
         let mut index_writer = BufWriter::new(index_file);
 
+        let mut curr_offset = 0;
         let mut index_key: Option<K> = None;
         let mut buffer = Vec::with_capacity(BUF_LEN);
+        let mut compression_buffer = Vec::with_capacity(BUF_LEN);
 
         for (key, value) in m.iter_mut() {
             let key = key.clone();
@@ -95,13 +109,16 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
 
             if !buffer.is_empty() && buffer.len() + record_len > BUF_LEN {
                 let first_key = index_key.take().unwrap();
-                Self::flush_block(
+                curr_offset = Self::flush_block(
                     &mut segment_writer,
                     &mut index_writer,
                     &mut sparse_index_keys,
                     &mut sparse_index_offsets,
+                    &mut sparse_index_block_sizes,
+                    curr_offset,
                     first_key,
                     &mut buffer,
+                    &mut compression_buffer,
                     c.compression_level(),
                 )?;
                 index_key = Some(key.clone());
@@ -127,8 +144,11 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
                 &mut index_writer,
                 &mut sparse_index_keys,
                 &mut sparse_index_offsets,
+                &mut sparse_index_block_sizes,
+                curr_offset,
                 first_key,
                 &mut buffer,
+                &mut compression_buffer,
                 c.compression_level(),
             )?;
         }
@@ -143,7 +163,8 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
             _index_file: index_file,
             sparse_index_keys,
             sparse_index_offsets,
-            buffer: Vec::with_capacity(BUF_LEN),
+            sparse_index_block_sizes,
+            buffer,
         })
     }
 
@@ -156,18 +177,20 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
 
         let offset = self.sparse_index_offsets[offset_index];
         let next_offset = if offset_index == self.sparse_index_offsets.len() - 1 {
-            self.segment_file.stream_position()?
+            self.segment_file.metadata()?.len()
         } else {
             self.sparse_index_offsets[offset_index + 1]
         };
 
         let block_size = (next_offset - offset) as usize;
         let mut compressed_block = vec![0u8; block_size];
+        let buffer_len = self.sparse_index_block_sizes[offset_index];
 
         self.segment_file.seek(SeekFrom::Start(offset))?;
         self.segment_file.read_exact(&mut compressed_block)?;
 
         self.buffer.clear();
+        self.buffer.resize(buffer_len, 0);
         bulk::decompress_to_buffer(&compressed_block, &mut self.buffer)?;
 
         let mut cursor = Cursor::new(self.buffer.as_slice());
@@ -178,21 +201,21 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
             cursor.read_exact(&mut key_bytes)?;
 
             let value_len = read_usize(&mut cursor)?;
-
             let mut value_bytes = vec![0u8; value_len];
             cursor.read_exact(&mut value_bytes)?;
 
             let mut key_input: &[u8] = key_bytes.as_slice();
             let key = K::decode_from(&mut key_input)?;
 
-            let mut value_input: &[u8] = value_bytes.as_slice();
-            let value = V::decode_from(&mut value_input)?;
-
             if &key == k {
                 self.buffer.clear();
+
                 if value_len == 0 {
                     return Ok(None);
                 }
+
+                let mut value_input: &[u8] = value_bytes.as_slice();
+                let value = V::decode_from(&mut value_input)?;
                 return Ok(Some(value));
             }
         }
