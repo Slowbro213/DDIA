@@ -1,6 +1,6 @@
 use std::{
     fs::{File, OpenOptions},
-    io::{self, BufReader, Read, Write},
+    io::{self, BufReader, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
@@ -25,27 +25,33 @@ impl WAL {
         self.file.write_all(&data)
     }
 
-    pub fn iter(&self) -> io::Result<WalReader> {
-        WalReader::open(&self.path)
-    }
-
     pub fn sync(&mut self) -> io::Result<()> {
         self.file.sync_data()
     }
+
+    pub fn clear(&mut self) -> io::Result<()> {
+        self.file.set_len(0)?;
+        self.file.seek(SeekFrom::Start(0))?;
+        Ok(())
+    }
+
+    pub fn to_reader(&self) -> io::Result<WalReader<'_>> {
+        WalReader::open(self)
+    }
 }
 
-pub struct WalReader {
-    reader: BufReader<File>,
+pub struct WalReader<'a> {
+    reader: BufReader<&'a File>,
 }
 
-impl WalReader {
-    pub fn open(path: &Path) -> Result<Self, io::Error> {
-        let reader = BufReader::new(File::open(path)?);
+impl<'a> WalReader<'a> {
+    pub fn open(wal: &'a WAL) -> Result<Self, io::Error> {
+        let reader = BufReader::new(&wal.file);
         Ok(Self { reader })
     }
 }
 
-impl Iterator for WalReader {
+impl<'a> Iterator for WalReader<'a> {
     type Item = io::Result<Vec<u8>>;
 
     fn next(&mut self) -> Option<Self::Item> {

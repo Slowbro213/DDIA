@@ -44,11 +44,8 @@ fn put_and_rm_and_get() {
     m.put(key, value);
     m.rm(key);
 
-    let returned = match m.get(&key) {
-        Some(val) => match val {
-            Some(v) => panic!("Value should have not been found because it was deleted"),
-            None => (),
-        },
-        None => panic!("Value could not be found"),
+    match m.get(&key).expect("Value could not be found") {
+        Some(_) => panic!("Value should have not been found because it was deleted"),
+        _ => {}
     };
 }
