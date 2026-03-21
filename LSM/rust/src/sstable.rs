@@ -1,4 +1,5 @@
-use core::{alloc::Allocator, result::Result};
+use core::{alloc::Allocator, hash::Hash, result::Result};
+use fastbloom::BloomFilter;
 use std::{
     fs::File,
     io::{BufWriter, Cursor, IntoInnerError, Read, Seek, SeekFrom, Write},
@@ -31,7 +32,8 @@ impl From<IntoInnerError<BufWriter<File>>> for SSTableError {
 
 const BUF_LEN: usize = 1 << 16;
 
-pub struct SSTable<K: Ord> {
+pub struct SSTable<K: Hash + Ord + Clone + Encode + Decode + ToLeBytes> {
+    bloom: BloomFilter,
     segment_file: File,
     _index_file: File,
     sparse_index_keys: Vec<K>,
@@ -41,7 +43,7 @@ pub struct SSTable<K: Ord> {
     buffer: Vec<u8>,
 }
 
-impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
+impl<K: Hash + Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
     fn flush_block(
         segment_writer: &mut BufWriter<File>,
         index_writer: &mut BufWriter<File>,
@@ -82,6 +84,7 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
         c: &Config,
         m: &mut Memtable<K, V, A>,
     ) -> Result<Self, SSTableError> {
+        let mut bloom = BloomFilter::with_num_bits(1024).expected_items(m.len());
         let mut sparse_index_keys = Vec::new();
         let mut sparse_index_offsets = Vec::new();
         let mut sparse_index_block_sizes = Vec::new();
@@ -96,6 +99,7 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
 
         for (key, value) in m.iter_mut() {
             let key = key.clone();
+            bloom.insert(&key);
 
             if index_key.is_none() {
                 index_key = Some(key.clone());
@@ -159,6 +163,7 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
         index_file.sync_all()?;
 
         Ok(Self {
+            bloom,
             segment_file,
             _index_file: index_file,
             sparse_index_keys,
@@ -169,6 +174,9 @@ impl<K: Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
     }
 
     pub fn get<V: Decode>(&mut self, k: &K) -> Result<Option<V>, SSTableError> {
+        if !self.bloom.contains(k) {
+            return Ok(None);
+        }
         let offset_index = match self.sparse_index_keys.binary_search(k) {
             Ok(i) => i,
             Err(0) => 0,

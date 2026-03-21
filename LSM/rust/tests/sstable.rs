@@ -1,5 +1,6 @@
 #![feature(allocator_api, anonymous_lifetime_in_impl_trait)]
 
+use core::hash::Hash;
 use std::{
     alloc::Global,
     fs::{self, File, OpenOptions},
@@ -74,6 +75,12 @@ impl Decode for TestValue {
             SSTableError::IO(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         })?;
         Ok(Self(s))
+    }
+}
+
+impl Hash for TestKey {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
     }
 }
 
