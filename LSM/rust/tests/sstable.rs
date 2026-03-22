@@ -10,9 +10,8 @@ use std::{
 };
 
 use lsm::{
-    config::Config,
     memtable::Memtable,
-    sstable::SSTable,
+    sstable::{SSTable, config::SSTableConfig},
     traits::{Decode, Encode, SSTableError, ToLeBytes},
 };
 
@@ -119,7 +118,7 @@ fn build_table(name: &str, pairs: impl IntoIterator<Item = (u64, &str)>) -> SSTa
         memtable.put(TestKey(k), TestValue(v.to_owned()));
     }
 
-    let cfg = Config::new(&dir, true, 9);
+    let cfg = SSTableConfig::new(true, 9);
 
     SSTable::new(segment_file, index_file, &cfg, &mut memtable).unwrap()
 }
@@ -222,7 +221,7 @@ fn supports_many_records_across_multiple_blocks() {
         memtable.put(TestKey(i), TestValue(payload));
     }
 
-    let cfg = Config::new(&dir, true, 1);
+    let cfg = SSTableConfig::new(true, 1);
     let mut table = SSTable::new(segment_file, index_file, &cfg, &mut memtable).unwrap();
 
     assert_eq!(
@@ -265,7 +264,7 @@ fn index_file_is_created_and_nonempty() {
     memtable.put(TestKey(2), TestValue("two".into()));
     memtable.put(TestKey(3), TestValue("three".into()));
 
-    let cfg = Config::new(&dir, true, 1);
+    let cfg = SSTableConfig::new(true, 1);
     let _table = SSTable::new(segment_file, index_file, &cfg, &mut memtable).unwrap();
 
     let metadata = fs::metadata(index_path).unwrap();
@@ -295,7 +294,7 @@ fn segment_file_is_created_and_nonempty() {
     let mut memtable = Memtable::<TestKey, TestValue, Global>::new_in(Global);
     memtable.put(TestKey(1), TestValue("one".into()));
 
-    let cfg = Config::new(&dir, true, 1);
+    let cfg = SSTableConfig::new(true, 1);
     let _table = SSTable::new(segment_file, index_file, &cfg, &mut memtable).unwrap();
 
     let metadata = fs::metadata(segment_path).unwrap();

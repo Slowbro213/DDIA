@@ -7,8 +7,8 @@ use std::{
 use zstd::bulk;
 
 use crate::{
-    config::Config,
     memtable::Memtable,
+    sstable::config::SSTableConfig,
     traits::{Decode, Encode, SSTableError, ToLeBytes},
 };
 
@@ -81,7 +81,7 @@ impl<K: Hash + Ord + Clone + Encode + Decode + ToLeBytes> SSTable<K> {
     pub fn new<V: Encode, A: Allocator + Clone>(
         segment_file: File,
         index_file: File,
-        c: &Config,
+        c: &SSTableConfig,
         m: &mut Memtable<K, V, A>,
     ) -> Result<Self, SSTableError> {
         let mut bloom = BloomFilter::with_num_bits(1024).expected_items(m.len());
