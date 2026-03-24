@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 bumpalo = { version = "3.20.2", features = ["allocator_api"]}
+criterion = "0.8.2"
 fastbloom = "0.17.0"
 zstd = "0.13.3"
