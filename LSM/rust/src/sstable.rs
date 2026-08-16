@@ -27,18 +27,15 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         self.sparse_offsets.push(offset);
     }
 
+    pub fn last_offset(&self) -> Option<&u64> {
+        self.sparse_offsets.last()
+    }
+
     pub fn get_offset(&self, key: &K) -> (u64, u64) {
         match self.sparse_keys.binary_search(key) {
             Ok(index) => return (self.sparse_offsets[index], self.sparse_offsets[index + 1]),
             Err(index) => {
-                if index == self.sparse_keys.len() {
-                    return (
-                        self.sparse_offsets[index - 2],
-                        self.sparse_offsets[index - 1],
-                    );
-                } else {
-                    return (self.sparse_offsets[index - 1], self.sparse_offsets[index]);
-                }
+                return (self.sparse_offsets[index - 1], self.sparse_offsets[index]);
             }
         }
     }
@@ -114,8 +111,10 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
                 key_value_pairs.push((K::deserialize(&k_buf), V::deserialize(&v_buf)));
                 k_buf.clear();
                 v_buf.clear();
+                k_buf.push(byte);
             }
         }
+        key_value_pairs.push((K::deserialize(&k_buf), V::deserialize(&v_buf)));
 
         Self {
             key_value_pairs: key_value_pairs,
@@ -179,7 +178,12 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
             let compressed_buf = zstd::encode_all(buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
             heap_file.write_all(compressed_buf.as_slice())?;
             if let Some(first_pair) = pairs.first() {
-                sparse_index.add_pair(first_pair.0.clone(), buf.len() as u64);
+                if let Some(last_offset) = sparse_index.last_offset() {
+                    sparse_index.add_pair(
+                        first_pair.0.clone(),
+                        *last_offset + compressed_buf.len() as u64,
+                    );
+                }
             }
         }
 

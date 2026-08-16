@@ -1,22 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    fs::{self},
-    panic,
-    path::Path,
-};
+use std::{collections::BTreeMap, panic, path::Path};
 
 use lsm::sstable::SSTable;
 
-fn delete_files_in_dir(dir: &Path) -> std::io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() {
-            fs::remove_file(&path)?;
-        }
-    }
-    Ok(())
-}
+mod common;
 
 #[test]
 fn search() {
@@ -45,19 +31,17 @@ fn search() {
             Ok(result) => match result {
                 Some(value) => assert_eq!(v, value),
                 None => {
-                    delete_files_in_dir(&heap_path).unwrap();
-                    delete_files_in_dir(&sparse_index_path).unwrap();
+                    common::delete_files_in_dir(data_dir).unwrap();
+
                     panic!("SSTable returned None when it should have returned Some");
                 }
             },
             Err(err) => {
-                delete_files_in_dir(&heap_path).unwrap();
-                delete_files_in_dir(&sparse_index_path).unwrap();
+                common::delete_files_in_dir(data_dir).unwrap();
                 panic!("{err}");
             }
         }
     }
 
-    delete_files_in_dir(&heap_path).unwrap();
-    delete_files_in_dir(&sparse_index_path).unwrap();
+    common::delete_files_in_dir(data_dir).unwrap();
 }
