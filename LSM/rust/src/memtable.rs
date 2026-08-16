@@ -1,29 +1,54 @@
-use core::alloc::Allocator;
-use std::collections::BTreeMap;
+use std::collections::{
+    BTreeMap,
+    btree_map::{IntoIter, Iter},
+};
 
-pub struct Memtable<K: Ord, V, A: Allocator + Clone> {
-    map: BTreeMap<K, Option<V>, A>,
+use crate::sstable::ToBytes;
+
+pub struct Memtable<K: Ord + ToBytes, V: ToBytes> {
+    pub map: BTreeMap<K, V>,
+    pub size: usize,
+    pub max_size: usize,
 }
 
-impl<K: Ord, V, A: Allocator + Clone> Memtable<K, V, A> {
-    pub fn new_in(alloc: A) -> Self {
+impl<K: Ord + ToBytes, V: ToBytes> Memtable<K, V> {
+    pub fn new(max_size: usize) -> Self {
         Self {
-            map: BTreeMap::new_in(alloc),
+            map: BTreeMap::new(),
+            size: 0,
+            max_size,
         }
     }
-    pub fn get(&self, k: &K) -> Option<&Option<V>> {
-        self.map.get(k)
+
+    pub fn put(&mut self, key: K, value: V) -> Option<V> {
+        self.size += 1;
+        self.map.insert(key, value)
     }
-    pub fn put(&mut self, k: K, v: V) -> Option<Option<V>> {
-        self.map.insert(k, Some(v))
+
+    pub fn get(&self, key: &K) -> Option<&V> {
+        self.map.get(key)
     }
-    pub fn rm(&mut self, k: K) -> Option<Option<V>> {
-        self.map.insert(k, None)
+
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.size = 0;
     }
-    pub fn iter_mut(&mut self) -> std::collections::btree_map::IterMut<'_, K, Option<V>> {
-        self.map.iter_mut()
+}
+
+impl<'a, K: Ord + ToBytes, V: ToBytes> IntoIterator for Memtable<K, V> {
+    type Item = (K, V);
+    type IntoIter = IntoIter<K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.into_iter()
     }
-    pub fn len(&self) -> usize {
-        self.map.len()
+}
+
+impl<'a, K: Ord + ToBytes, V: ToBytes> IntoIterator for &'a Memtable<K, V> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = Iter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.map.iter()
     }
 }
