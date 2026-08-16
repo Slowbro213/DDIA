@@ -1,6 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self},
+    panic,
     path::Path,
 };
 
@@ -40,12 +41,20 @@ fn search() {
     let sstable =
         SSTable::from_iter(&heap_path, &sparse_index_path, map.iter().peekable()).unwrap();
     for (k, v) in pairs.clone() {
-        if let Some(value) = sstable.get(&k).unwrap() {
-            assert_eq!(v, value);
-        } else {
-            delete_files_in_dir(&heap_path).unwrap();
-            delete_files_in_dir(&sparse_index_path).unwrap();
-            panic!("SSTable returned None when it should have returned Some");
+        match sstable.get(&k) {
+            Ok(result) => match result {
+                Some(value) => assert_eq!(v, value),
+                None => {
+                    delete_files_in_dir(&heap_path).unwrap();
+                    delete_files_in_dir(&sparse_index_path).unwrap();
+                    panic!("SSTable returned None when it should have returned Some");
+                }
+            },
+            Err(err) => {
+                delete_files_in_dir(&heap_path).unwrap();
+                delete_files_in_dir(&sparse_index_path).unwrap();
+                panic!("{err}");
+            }
         }
     }
 
