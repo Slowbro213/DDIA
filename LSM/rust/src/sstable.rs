@@ -1,13 +1,15 @@
-use std::array::IntoIter;
 use std::collections::btree_map::Iter;
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::fs;
+use std::io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::iter::Peekable;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fs::File, marker::PhantomData};
 
 use zstd::DEFAULT_COMPRESSION_LEVEL;
 
-const SPARSITY: usize = 10;
+use crate::lsm::MEMTABLE_MAX_SIZE;
+
+const SPARSITY: usize = MEMTABLE_MAX_SIZE / 100;
 
 pub struct SparseIndex<K: Ord + ToBytes> {
     sparse_keys: Vec<K>,
@@ -32,11 +34,15 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         self.sparse_offsets.last()
     }
 
-    pub fn get_offset(&self, key: &K) -> (u64, u64) {
+    pub fn get_offset(&self, key: &K) -> Option<(u64, u64)> {
         match self.sparse_keys.binary_search(key) {
-            Ok(index) => return (self.sparse_offsets[index], self.sparse_offsets[index + 1]),
+            Ok(index) => Some((self.sparse_offsets[index], self.sparse_offsets[index + 1])),
             Err(index) => {
-                return (self.sparse_offsets[index - 1], self.sparse_offsets[index]);
+                if index == 0 {
+                    None
+                } else {
+                    Some((self.sparse_offsets[index - 1], self.sparse_offsets[index]))
+                }
             }
         }
     }
@@ -53,7 +59,9 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
             buf.extend(key.serialize());
         }
 
-        for offset in &self.sparse_offsets {
+        let mut offsets_itr = self.sparse_offsets.iter();
+        offsets_itr.next(); // skip the first 0
+        for offset in offsets_itr {
             buf.extend(offset.to_le_bytes());
         }
 
@@ -64,7 +72,7 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         let mut sparse_keys = Vec::new();
         let mut sparse_offsets = vec![0];
 
-        let mut buf_iter = buf.into_iter(); 
+        let mut buf_iter = buf.into_iter();
         let keys_len_bytes: Vec<u8> = buf_iter.by_ref().take(size_of::<usize>()).collect();
         let keys_len = usize::from_le_bytes(keys_len_bytes.try_into().unwrap());
         for _ in 0..keys_len {
@@ -153,12 +161,31 @@ pub struct SSTable<K: Ord + ToBytes, V: ToBytes> {
 }
 
 impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
-    pub fn new(index: SparseIndex<K>, filepath: String) -> Self {
+    fn new(index: SparseIndex<K>, filepath: String) -> Self {
         return Self {
             index,
             filepath: filepath,
             _marker: PhantomData {},
         };
+    }
+
+    pub fn get(&self, key: &K) -> Result<Option<V>, io::Error> {
+        let Some((start, end)) = self.index.get_offset(key) else {
+            return Ok(None);
+        };
+
+        let mut file = File::open(&self.filepath)?;
+        file.seek(SeekFrom::Start(start))?;
+        let mut buf = vec![0u8; (end - start) as usize];
+        file.read_exact(&mut buf)?;
+
+        let data = zstd::decode_all(buf.as_slice())?;
+        let sstable_entry: SSTableEntry<K, V> = SSTableEntry::from_buf(data);
+
+        Ok(sstable_entry
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v))
     }
 
     pub fn from_iter(
@@ -192,7 +219,9 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
             }
         }
 
-        sparse_index_file.write_all(sparse_index.to_buf().as_slice())?;
+        let compressed_sparse_index_buf =
+            zstd::encode_all(sparse_index.to_buf().as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
+        sparse_index_file.write_all(&compressed_sparse_index_buf)?;
 
         Ok(Self::new(
             sparse_index,
@@ -200,20 +229,52 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
         ))
     }
 
-    pub fn get(&self, key: &K) -> Result<Option<V>, io::Error> {
-        let (start, end) = self.index.get_offset(key);
+    pub fn from_data(heap_path: &Path, sparse_index_path: &Path) -> Result<Vec<Self>, io::Error> {
+        if !sparse_index_path.is_dir() || !heap_path.is_dir() {
+            return Err(Error::new(ErrorKind::NotFound, "path is not a directory"));
+        }
 
-        let mut file = File::open(&self.filepath)?;
-        file.seek(SeekFrom::Start(start))?;
-        let mut buf = vec![0u8; (end - start) as usize];
-        file.read_exact(&mut buf)?;
+        let sparse_index_dir = fs::read_dir(sparse_index_path)?;
+        let heap_dir = fs::read_dir(heap_path)?;
+        let count = fs::read_dir(sparse_index_path)?.count();
 
-        let data = zstd::decode_all(buf.as_slice())?;
-        let sstable_entry: SSTableEntry<K, V> = SSTableEntry::from_buf(data);
+        let mut map: Vec<Option<PathBuf>> = vec![None; count];
 
-        Ok(sstable_entry
-            .into_iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v))
+        for entry in heap_dir {
+            let entry = entry?;
+            if let Some(name) = entry.file_name().to_str() {
+                if let Ok(num_name) = name.parse::<usize>() {
+                    let path = entry.path();
+                    map[num_name] = Some(path);
+                }
+            }
+        }
+
+        let mut sstables = Vec::new();
+        for s_entry in sparse_index_dir {
+            let s_entry = s_entry?;
+            let s_path = s_entry.path();
+            if s_path.is_file() {
+                let mut s_file = File::open(s_path)?;
+
+                let mut s_compressed_buf = Vec::new();
+                s_file.read_to_end(&mut s_compressed_buf)?;
+                let s_buf = zstd::decode_all(s_compressed_buf.as_slice())?;
+                let sparse_index: SparseIndex<K> = SparseIndex::from_buf(s_buf);
+
+                if let Some(name) = s_entry.file_name().to_str() {
+                    if let Ok(num_name) = name.parse::<usize>() {
+                        let h_path = map[num_name].as_mut().unwrap();
+
+                        sstables.push(SSTable::new(
+                            sparse_index,
+                            h_path.to_string_lossy().into_owned(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(sstables)
     }
 }

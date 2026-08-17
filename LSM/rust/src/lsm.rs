@@ -34,10 +34,9 @@ impl ToBytes for String {
     }
 }
 
-
 const HEAP_DIR: &str = "heap";
 const SPARSE_INDEX_DIR: &str = "sparse_index";
-const MEMTABLE_MAX_SIZE: usize = 100;
+pub const MEMTABLE_MAX_SIZE: usize = 100;
 
 pub struct LSM<K: Ord + ToBytes, V: ToBytes> {
     memtable: Memtable<K, V>,
@@ -47,22 +46,33 @@ pub struct LSM<K: Ord + ToBytes, V: ToBytes> {
 }
 
 impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
-    pub fn new(data_dir: String) -> Self {
+    pub fn new_empty(data_dir: String) -> Self {
         Self {
             memtable: Memtable::new(MEMTABLE_MAX_SIZE),
             sstables: Vec::new(),
             data_dir,
         }
     }
+
+    pub fn new(data_dir: String) -> Result<Self, io::Error> {
+        let heap_path = Path::new(&data_dir).join(Path::new(HEAP_DIR));
+        let sparse_index_path = Path::new(&data_dir).join(Path::new(SPARSE_INDEX_DIR));
+
+        Ok(Self {
+            memtable: Memtable::new(MEMTABLE_MAX_SIZE),
+            sstables: SSTable::from_data(&heap_path, &sparse_index_path)?,
+            data_dir,
+        })
+    }
+
     pub fn get(&self, key: &K) -> Result<Option<V>, io::Error> {
         if let Some(value) = self.memtable.get(key) {
             return Ok(Some(value.clone()));
         }
 
         for sstable in &self.sstables {
-            match sstable.get(key)? {
-                Some(value) => return Ok(Some(value)),
-                None => {}
+            if let Some(value) = sstable.get(key)? {
+                return Ok(Some(value));
             };
         }
 
@@ -78,6 +88,12 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
         }
 
         Ok(val)
+    }
+
+    pub fn clear(&mut self) -> Result<(), io::Error> {
+        self.sstables.push(self.flush()?);
+        self.memtable.clear();
+        Ok(())
     }
 
     fn flush(&self) -> Result<SSTable<K, V>, io::Error> {
