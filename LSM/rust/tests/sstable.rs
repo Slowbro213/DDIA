@@ -11,7 +11,7 @@ fn search() {
     let sparse_index_path = test_dir.sparse_index_path.join("0");
 
     let mut pairs = Vec::new();
-    for i in 0..1000 {
+    for i in 0..10000 {
         pairs.push((i * 2, i * 2 + 1));
     }
 

@@ -242,11 +242,13 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
 
         for entry in heap_dir {
             let entry = entry?;
-            if let Some(name) = entry.file_name().to_str() {
-                if let Ok(num_name) = name.parse::<usize>() {
-                    let path = entry.path();
-                    map[num_name] = Some(path);
-                }
+
+            if let Some(num_name) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<usize>().ok())
+            {
+                map[num_name] = Some(entry.path());
             }
         }
 
@@ -262,15 +264,16 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
                 let s_buf = zstd::decode_all(s_compressed_buf.as_slice())?;
                 let sparse_index: SparseIndex<K> = SparseIndex::from_buf(s_buf);
 
-                if let Some(name) = s_entry.file_name().to_str() {
-                    if let Ok(num_name) = name.parse::<usize>() {
-                        let h_path = map[num_name].as_mut().unwrap();
-
-                        sstables.push(SSTable::new(
-                            sparse_index,
-                            h_path.to_string_lossy().into_owned(),
-                        ));
-                    }
+                if let Some(h_path) = s_entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<usize>().ok())
+                    .and_then(|num_name| map[num_name].as_mut())
+                {
+                    sstables.push(SSTable::new(
+                        sparse_index,
+                        h_path.to_string_lossy().into_owned(),
+                    ));
                 }
             }
         }

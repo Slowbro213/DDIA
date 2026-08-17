@@ -36,7 +36,7 @@ impl ToBytes for String {
 
 const HEAP_DIR: &str = "heap";
 const SPARSE_INDEX_DIR: &str = "sparse_index";
-pub const MEMTABLE_MAX_SIZE: usize = 100;
+pub const MEMTABLE_MAX_SIZE: usize = 1000;
 
 pub struct LSM<K: Ord + ToBytes, V: ToBytes> {
     memtable: Memtable<K, V>,
