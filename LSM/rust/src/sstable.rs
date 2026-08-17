@@ -16,6 +16,12 @@ pub struct SparseIndex<K: Ord + ToBytes> {
     sparse_offsets: Vec<u64>,
 }
 
+impl<K: Ord + ToBytes> Default for SparseIndex<K> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K: Ord + ToBytes> SparseIndex<K> {
     pub fn new() -> Self {
         let sparse_offsets = vec![0];
@@ -85,7 +91,7 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         }
 
         while let Ok(chunk) = buf_iter.next_chunk::<{ size_of::<u64>() }>() {
-            let offset = u64::from_le_bytes(chunk.try_into().unwrap());
+            let offset = u64::from_le_bytes(chunk);
             sparse_offsets.push(offset);
         }
 
@@ -98,7 +104,7 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
 
 pub trait ToBytes {
     fn serialize(&self) -> Vec<u8>;
-    fn deserialize(v: &Vec<u8>) -> Self;
+    fn deserialize(v: &[u8]) -> Self;
     fn bytes_len(&self) -> usize;
 }
 
@@ -114,7 +120,7 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
 
         let mut key_value_pairs = Vec::new();
         while let Ok(len_bytes) = bytes_iter.next_chunk::<{ size_of::<usize>() }>() {
-            let key_len = usize::from_le_bytes(len_bytes.try_into().unwrap());
+            let key_len = usize::from_le_bytes(len_bytes);
             let key_bytes: Vec<u8> = bytes_iter.by_ref().take(key_len).collect();
             let key = K::deserialize(&key_bytes.to_vec());
 
@@ -126,9 +132,7 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
             key_value_pairs.push((key, value));
         }
 
-        Self {
-            key_value_pairs: key_value_pairs,
-        }
+        Self { key_value_pairs }
     }
 
     pub fn to_buf(pairs: &Vec<(&K, &V)>) -> Vec<u8> {
@@ -162,11 +166,11 @@ pub struct SSTable<K: Ord + ToBytes, V: ToBytes> {
 
 impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
     fn new(index: SparseIndex<K>, filepath: String) -> Self {
-        return Self {
+        Self {
             index,
-            filepath: filepath,
+            filepath,
             _marker: PhantomData {},
-        };
+        }
     }
 
     pub fn get(&self, key: &K) -> Result<Option<V>, io::Error> {
@@ -209,13 +213,13 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
             let buf = SSTableEntry::to_buf(&pairs);
             let compressed_buf = zstd::encode_all(buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
             heap_file.write_all(compressed_buf.as_slice())?;
-            if let Some(first_pair) = pairs.first() {
-                if let Some(last_offset) = sparse_index.last_offset() {
-                    sparse_index.add_pair(
-                        first_pair.0.clone(),
-                        *last_offset + compressed_buf.len() as u64,
-                    );
-                }
+            if let Some(first_pair) = pairs.first()
+                && let Some(last_offset) = sparse_index.last_offset()
+            {
+                sparse_index.add_pair(
+                    first_pair.0.clone(),
+                    *last_offset + compressed_buf.len() as u64,
+                );
             }
         }
 

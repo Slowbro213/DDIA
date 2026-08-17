@@ -35,7 +35,7 @@ impl<K: Ord + ToBytes, V: ToBytes> Memtable<K, V> {
     }
 }
 
-impl<'a, K: Ord + ToBytes, V: ToBytes> IntoIterator for Memtable<K, V> {
+impl<K: Ord + ToBytes, V: ToBytes> IntoIterator for Memtable<K, V> {
     type Item = (K, V);
     type IntoIter = IntoIter<K, V>;
 

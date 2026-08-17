@@ -14,8 +14,8 @@ impl ToBytes for usize {
     fn serialize(&self) -> Vec<u8> {
         self.to_le_bytes().to_vec()
     }
-    fn deserialize(v: &Vec<u8>) -> Self {
-        usize::from_le_bytes(v.as_slice().try_into().unwrap())
+    fn deserialize(v: &[u8]) -> Self {
+        usize::from_le_bytes(v.try_into().unwrap())
     }
     fn bytes_len(&self) -> usize {
         size_of::<usize>()
@@ -26,8 +26,8 @@ impl ToBytes for String {
     fn serialize(&self) -> Vec<u8> {
         self.clone().into_bytes()
     }
-    fn deserialize(v: &Vec<u8>) -> Self {
-        String::from_utf8_lossy_owned(v.clone())
+    fn deserialize(v: &[u8]) -> Self {
+        String::from_utf8_lossy_owned(v.to_vec())
     }
     fn bytes_len(&self) -> usize {
         self.len()
@@ -70,7 +70,8 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
             return Ok(Some(value.clone()));
         }
 
-        for sstable in &self.sstables {
+        // Iterate from latest to oldest
+        for sstable in self.sstables.iter().rev() {
             if let Some(value) = sstable.get(key)? {
                 return Ok(Some(value));
             };
