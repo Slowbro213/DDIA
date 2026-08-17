@@ -17,10 +17,23 @@ impl ToBytes for usize {
     fn deserialize(v: &Vec<u8>) -> Self {
         usize::from_le_bytes(v.as_slice().try_into().unwrap())
     }
-    fn bytes_len() -> u64 {
-        size_of::<usize>() as u64
+    fn bytes_len(&self) -> usize {
+        size_of::<usize>()
     }
 }
+
+impl ToBytes for String {
+    fn serialize(&self) -> Vec<u8> {
+        self.clone().into_bytes()
+    }
+    fn deserialize(v: &Vec<u8>) -> Self {
+        String::from_utf8_lossy_owned(v.clone())
+    }
+    fn bytes_len(&self) -> usize {
+        self.len()
+    }
+}
+
 
 const HEAP_DIR: &str = "heap";
 const SPARSE_INDEX_DIR: &str = "sparse_index";

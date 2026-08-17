@@ -6,7 +6,7 @@ mod common;
 
 #[test]
 fn search() {
-    let data_dir = "./data";
+    let data_dir = "./data_sstable_search";
     let heap_path = Path::new(data_dir)
         .join(Path::new("heap"))
         .join(Path::new("0"));

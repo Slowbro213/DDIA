@@ -1,3 +1,4 @@
+use std::array::IntoIter;
 use std::collections::btree_map::Iter;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::iter::Peekable;
@@ -40,11 +41,15 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         }
     }
 
+    // sparse_indexes layout:
+    // keys_len: key (key_len + key)...
+    // offsets...
     pub fn to_buf(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(self.sparse_keys.len());
 
         buf.extend(self.sparse_keys.len().to_le_bytes());
         for key in &self.sparse_keys {
+            buf.extend(key.bytes_len().to_le_bytes());
             buf.extend(key.serialize());
         }
 
@@ -55,25 +60,25 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         buf
     }
 
-    pub fn from_buf(buf: &[u8]) -> Self {
-        // Get the length of the keys from the buffer first
-        let keys_len = usize::from_le_bytes(buf.split_at(size_of::<usize>()).0.try_into().unwrap());
-        let mut sparse_keys = Vec::with_capacity(keys_len);
+    pub fn from_buf(buf: Vec<u8>) -> Self {
+        let mut sparse_keys = Vec::new();
+        let mut sparse_offsets = vec![0];
 
-        // buffer - the beginning usize leaves just the bytes for all of the offsets
-        // diving that by the size of the offset leaves the number of offsets
-        let offsets_len = (buf.len() - size_of::<usize>()) / size_of::<u64>();
-        let mut sparse_offsets = Vec::with_capacity(offsets_len);
+        let mut buf_iter = buf.into_iter(); 
+        let keys_len_bytes: Vec<u8> = buf_iter.by_ref().take(size_of::<usize>()).collect();
+        let keys_len = usize::from_le_bytes(keys_len_bytes.try_into().unwrap());
+        for _ in 0..keys_len {
+            let key_len_bytes: Vec<u8> = buf_iter.by_ref().take(size_of::<usize>()).collect();
+            let key_len = usize::from_le_bytes(key_len_bytes.try_into().unwrap());
+            let key_bytes: Vec<u8> = buf_iter.by_ref().take(key_len).collect();
+            let key = K::deserialize(&key_bytes);
 
-        let keys_bytes = &buf[size_of::<usize>()..keys_len * K::bytes_len() as usize];
-        let offsets_bytes = &buf[size_of::<usize>() + keys_len * K::bytes_len() as usize..];
-
-        for chunk in keys_bytes.chunks(K::bytes_len() as usize) {
-            sparse_keys.push(K::deserialize(&chunk.to_vec()));
+            sparse_keys.push(key);
         }
 
-        for chunk in offsets_bytes.chunks(size_of::<u64>()) {
-            sparse_offsets.push(u64::from_le_bytes(chunk.try_into().unwrap()));
+        while let Ok(chunk) = buf_iter.next_chunk::<{ size_of::<u64>() }>() {
+            let offset = u64::from_le_bytes(chunk.try_into().unwrap());
+            sparse_offsets.push(offset);
         }
 
         Self {
@@ -86,7 +91,7 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
 pub trait ToBytes {
     fn serialize(&self) -> Vec<u8>;
     fn deserialize(v: &Vec<u8>) -> Self;
-    fn bytes_len() -> u64;
+    fn bytes_len(&self) -> usize;
 }
 
 pub struct SSTableEntry<K: Ord + ToBytes, V: ToBytes> {
@@ -94,27 +99,24 @@ pub struct SSTableEntry<K: Ord + ToBytes, V: ToBytes> {
 }
 
 impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
+    // layout in buffer should be:
+    // key_len , key bytes, value_len, value_bytes
     pub fn from_buf(buf: Vec<u8>) -> Self {
         let mut bytes_iter = buf.into_iter();
 
         let mut key_value_pairs = Vec::new();
-        let mut k_buf = Vec::with_capacity(K::bytes_len() as usize);
-        let mut v_buf = Vec::with_capacity(V::bytes_len() as usize);
-        while let Some(byte) = bytes_iter.next() {
-            if k_buf.len() != K::bytes_len() as usize {
-                k_buf.push(byte);
-                continue;
-            } else if v_buf.len() != V::bytes_len() as usize {
-                v_buf.push(byte);
-                continue;
-            } else {
-                key_value_pairs.push((K::deserialize(&k_buf), V::deserialize(&v_buf)));
-                k_buf.clear();
-                v_buf.clear();
-                k_buf.push(byte);
-            }
+        while let Ok(len_bytes) = bytes_iter.next_chunk::<{ size_of::<usize>() }>() {
+            let key_len = usize::from_le_bytes(len_bytes.try_into().unwrap());
+            let key_bytes: Vec<u8> = bytes_iter.by_ref().take(key_len).collect();
+            let key = K::deserialize(&key_bytes.to_vec());
+
+            let len_bytes: Vec<u8> = bytes_iter.by_ref().take(size_of::<usize>()).collect();
+            let value_len = usize::from_le_bytes(len_bytes.try_into().unwrap());
+            let value_bytes: Vec<u8> = bytes_iter.by_ref().take(value_len).collect();
+            let value = V::deserialize(&value_bytes.to_vec());
+
+            key_value_pairs.push((key, value));
         }
-        key_value_pairs.push((K::deserialize(&k_buf), V::deserialize(&v_buf)));
 
         Self {
             key_value_pairs: key_value_pairs,
@@ -124,7 +126,10 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
     pub fn to_buf(pairs: &Vec<(&K, &V)>) -> Vec<u8> {
         let mut buf = Vec::with_capacity(pairs.len());
         for (a, b) in pairs {
+            buf.extend(a.bytes_len().to_le_bytes());
             buf.extend(a.serialize());
+
+            buf.extend(b.bytes_len().to_le_bytes());
             buf.extend(b.serialize());
         }
         buf
