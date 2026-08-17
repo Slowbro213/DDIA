@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, panic, path::Path};
+use std::collections::BTreeMap;
 
 use lsm::sstable::SSTable;
 
@@ -6,13 +6,9 @@ mod common;
 
 #[test]
 fn search() {
-    let data_dir = "./data_sstable_search";
-    let heap_path = Path::new(data_dir)
-        .join(Path::new("heap"))
-        .join(Path::new("0"));
-    let sparse_index_path = Path::new(data_dir)
-        .join(Path::new("sparse_index"))
-        .join(Path::new("0"));
+    let test_dir = common::TestDir::new("data_sstable_search");
+    let heap_path = test_dir.heap_path.join("0");
+    let sparse_index_path = test_dir.sparse_index_path.join("0");
 
     let mut pairs = Vec::new();
     for i in 0..1000 {
@@ -30,18 +26,9 @@ fn search() {
         match sstable.get(&k) {
             Ok(result) => match result {
                 Some(value) => assert_eq!(v, value),
-                None => {
-                    common::delete_files_in_dir(data_dir).unwrap();
-
-                    panic!("SSTable returned None when it should have returned Some");
-                }
+                None => panic!("SSTable returned None when it should have returned Some"),
             },
-            Err(err) => {
-                common::delete_files_in_dir(data_dir).unwrap();
-                panic!("{err}");
-            }
+            Err(err) => panic!("{err}"),
         }
     }
-
-    common::delete_files_in_dir(data_dir).unwrap();
 }

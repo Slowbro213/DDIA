@@ -3,8 +3,8 @@ mod common;
 
 #[test]
 fn basic_usage() {
-    let data_dir = "./data_basic_usage";
-    let mut lsm: LSM<usize, usize> = LSM::new(String::from(data_dir));
+    let test_dir = common::TestDir::new("data_basic_usage");
+    let mut lsm: LSM<usize, usize> = LSM::new(test_dir.path().to_string_lossy().into_owned());
 
     let mut pairs = Vec::new();
 
@@ -25,15 +25,12 @@ fn basic_usage() {
             panic!("lsm get returned None when it should have been Some");
         }
     }
-
-    //cleanup
-    common::delete_files_in_dir(data_dir).unwrap();
 }
 
 #[test]
 fn string_usage() {
-    let data_dir = "./data_string_usage";
-    let mut lsm: LSM<String, String> = LSM::new(String::from(data_dir));
+    let test_dir = common::TestDir::new("data_string_usage");
+    let mut lsm: LSM<String, String> = LSM::new(test_dir.path().to_string_lossy().into_owned());
 
     let mut pairs = Vec::new();
 
@@ -54,7 +51,4 @@ fn string_usage() {
             panic!("lsm get returned None when it should have been Some");
         }
     }
-
-    //cleanup
-    common::delete_files_in_dir(data_dir).unwrap();
 }
