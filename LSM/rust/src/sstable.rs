@@ -109,7 +109,7 @@ pub trait ToBytes {
 }
 
 pub struct SSTableEntry<K: Ord + ToBytes, V: ToBytes> {
-    key_value_pairs: Vec<(K, V)>,
+    key_value_pairs: Vec<(K, Option<V>)>,
 }
 
 impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
@@ -126,31 +126,39 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
 
             let len_bytes: Vec<u8> = bytes_iter.by_ref().take(size_of::<usize>()).collect();
             let value_len = usize::from_le_bytes(len_bytes.try_into().unwrap());
-            let value_bytes: Vec<u8> = bytes_iter.by_ref().take(value_len).collect();
-            let value = V::deserialize(&value_bytes.to_vec());
+            if value_len > 0 {
+                let value_bytes: Vec<u8> = bytes_iter.by_ref().take(value_len).collect();
+                let value = V::deserialize(&value_bytes.to_vec());
 
-            key_value_pairs.push((key, value));
+                key_value_pairs.push((key, Some(value)));
+            } else {
+                key_value_pairs.push((key, None));
+            }
         }
 
         Self { key_value_pairs }
     }
 
-    pub fn to_buf(pairs: &Vec<(&K, &V)>) -> Vec<u8> {
+    pub fn to_buf(pairs: &Vec<(&K, &Option<V>)>) -> Vec<u8> {
         let mut buf = Vec::with_capacity(pairs.len());
         for (a, b) in pairs {
             buf.extend(a.bytes_len().to_le_bytes());
             buf.extend(a.serialize());
 
-            buf.extend(b.bytes_len().to_le_bytes());
-            buf.extend(b.serialize());
+            if let Some(value) = b {
+                buf.extend(value.bytes_len().to_le_bytes());
+                buf.extend(value.serialize());
+            } else {
+                buf.extend((0_usize).to_le_bytes());
+            }
         }
         buf
     }
 }
 
 impl<K: Ord + ToBytes, V: ToBytes> IntoIterator for SSTableEntry<K, V> {
-    type Item = (K, V);
-    type IntoIter = std::vec::IntoIter<(K, V)>;
+    type Item = (K, Option<V>);
+    type IntoIter = std::vec::IntoIter<(K, Option<V>)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.key_value_pairs.into_iter()
@@ -189,13 +197,13 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
         Ok(sstable_entry
             .into_iter()
             .find(|(k, _)| k == key)
-            .map(|(_, v)| v))
+            .map(|(_, v)| v).and_then(|v| v))
     }
 
     pub fn from_iter(
         heap_path: &Path,
         sparse_index_path: &Path,
-        mut iter: Peekable<Iter<K, V>>,
+        mut iter: Peekable<Iter<K, Option<V>>>,
     ) -> Result<Self, io::Error> {
         let mut sparse_index = SparseIndex::new();
 
@@ -203,7 +211,7 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
         let mut sparse_index_file = File::create(sparse_index_path)?;
 
         while iter.peek().is_some() {
-            let mut pairs: Vec<(&K, &V)> = Vec::with_capacity(SPARSITY);
+            let mut pairs: Vec<(&K, &Option<V>)> = Vec::with_capacity(SPARSITY);
             for _ in 0..SPARSITY {
                 match iter.next() {
                     Some(pair) => pairs.push(pair),
@@ -242,7 +250,7 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
         let heap_dir = fs::read_dir(heap_path)?;
         let count = fs::read_dir(sparse_index_path)?.count();
 
-        let mut map: Vec<Option<PathBuf>> = vec![None; count];
+        let mut map: Vec<Option<PathBuf>> = std::iter::repeat_with(|| None).take(count).collect();
 
         for entry in heap_dir {
             let entry = entry?;
@@ -256,7 +264,7 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
             }
         }
 
-        let mut sstables = Vec::new();
+        let mut sstables: Vec<Option<SSTable<K, V>>> = std::iter::repeat_with(|| None).take(count).collect();
         for s_entry in sparse_index_dir {
             let s_entry = s_entry?;
             let s_path = s_entry.path();
@@ -268,20 +276,20 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
                 let s_buf = zstd::decode_all(s_compressed_buf.as_slice())?;
                 let sparse_index: SparseIndex<K> = SparseIndex::from_buf(s_buf);
 
-                if let Some(h_path) = s_entry
+                if let Some((num_name, Some(h_path))) = s_entry
                     .file_name()
                     .to_str()
                     .and_then(|name| name.parse::<usize>().ok())
-                    .and_then(|num_name| map[num_name].as_mut())
+                    .and_then(|num_name| map.get_mut(num_name).map(|h| (num_name, h)))
                 {
-                    sstables.push(SSTable::new(
+                    sstables.insert(num_name, Some(SSTable::new(
                         sparse_index,
                         h_path.to_string_lossy().into_owned(),
-                    ));
+                    )));
                 }
             }
         }
 
-        Ok(sstables)
+        Ok(sstables.into_iter().flatten().collect())
     }
 }

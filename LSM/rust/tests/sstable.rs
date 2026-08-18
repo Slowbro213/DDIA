@@ -17,7 +17,7 @@ fn search() {
 
     let mut map = BTreeMap::new();
     for (k, v) in pairs.clone() {
-        map.insert(k, v);
+        map.insert(k, Some(v));
     }
 
     let sstable =
