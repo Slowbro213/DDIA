@@ -4,11 +4,11 @@ mod common;
 #[test]
 fn basic_usage() {
     let test_dir = common::TestDir::new("data_basic_usage");
-    let mut lsm: LSM<usize, usize> = LSM::new_empty(test_dir.path().to_string_lossy().into_owned());
+    let mut lsm: LSM<usize, usize> = LSM::new_empty(test_dir.path().to_string_lossy().into_owned()).unwrap();
 
     let mut pairs = Vec::new();
 
-    for i in 0..10000 {
+    for i in 0..100000 {
         pairs.push((i * 2, i * 2 + 1));
     }
 
@@ -31,11 +31,11 @@ fn basic_usage() {
 fn string_usage() {
     let test_dir = common::TestDir::new("data_string_usage");
     let mut lsm: LSM<String, String> =
-        LSM::new_empty(test_dir.path().to_string_lossy().into_owned());
+        LSM::new_empty(test_dir.path().to_string_lossy().into_owned()).unwrap();
 
     let mut pairs = Vec::new();
 
-    for i in 0..10000 {
+    for i in 0..100000 {
         pairs.push((format!("key{}", i), format!("value{}", i)));
     }
 
@@ -58,12 +58,12 @@ fn string_usage() {
 fn writes_persist_and_are_searchable() {
     let test_dir = common::TestDir::new("data_persist_usage");
     let mut lsm: LSM<String, String> =
-        LSM::new_empty(test_dir.path().to_string_lossy().into_owned());
+        LSM::new_empty(test_dir.path().to_string_lossy().into_owned()).unwrap();
 
     let mut pairs = Vec::new();
 
     // -1 so that at least one entry is in the memtable
-    for i in 0..(10000-1) {
+    for i in 0..(100000-100) {
         pairs.push((format!("key{}", i), format!("value{}", i)));
     }
 
@@ -72,9 +72,8 @@ fn writes_persist_and_are_searchable() {
         lsm.put(k, v).unwrap();
     }
 
-    // flush the memtable so all entires are on disk
-    lsm.clear().unwrap();
-
+    // new lsm will have its memtable
+    // constructed from the WAL
     let new_lsm: LSM<String, String> =
         LSM::new(test_dir.path().to_string_lossy().into_owned()).unwrap();
 
@@ -92,25 +91,25 @@ fn writes_persist_and_are_searchable() {
 fn basic_deleting() {
     let test_dir = common::TestDir::new("basic_deleting");
     let mut lsm: LSM<String, String> =
-        LSM::new_empty(test_dir.path().to_string_lossy().into_owned());
+        LSM::new_empty(test_dir.path().to_string_lossy().into_owned()).unwrap();
 
     let mut pairs = Vec::new();
 
-    for i in 0..10000 {
+    for i in 0..100000 {
         pairs.push((format!("key{}", i), format!("value{}", i)));
     }
 
     let mut pairs_to_delete = Vec::new();
 
-    for i in 0..1000 {
+    for i in 0..10000 {
         pairs_to_delete.push((format!("key{}", i), format!("value{}", i)));
     }
 
-    for i in 2000..3000 {
+    for i in 20000..30000 {
         pairs_to_delete.push((format!("key{}", i), format!("value{}", i)));
     }
 
-    for i in 7000..8000 {
+    for i in 70000..80000 {
         pairs_to_delete.push((format!("key{}", i), format!("value{}", i)));
     }
 
@@ -121,7 +120,7 @@ fn basic_deleting() {
 
     // Delete some pairs
     for (k, _) in pairs_to_delete.clone() {
-        lsm.delete(k);
+        lsm.delete(k).unwrap();
     }
 
     // Get them all

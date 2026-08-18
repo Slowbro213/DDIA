@@ -1,6 +1,7 @@
 use std::{
     collections::btree_map::Iter,
-    io::{self},
+    fs::{File, OpenOptions},
+    io::{self, Write},
     iter::Peekable,
     path::Path,
 };
@@ -36,32 +37,49 @@ impl ToBytes for String {
 
 const HEAP_DIR: &str = "heap";
 const SPARSE_INDEX_DIR: &str = "sparse_index";
-pub const MEMTABLE_MAX_SIZE: usize = 1000;
+const WAL_PATH: &str = "wal.txt";
+const MEMTABLE_MAX_SIZE: usize = 10000;
 
 pub struct LSM<K: Ord + ToBytes, V: ToBytes + Clone> {
     memtable: Memtable<K, V>,
     sstables: Vec<SSTable<K, V>>,
+    wal: File,
 
     data_dir: String,
 }
 
 impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
-    pub fn new_empty(data_dir: String) -> Self {
-        Self {
+    pub fn new_empty(data_dir: String) -> Result<Self, io::Error> {
+        let wal_path = Path::new(&data_dir).join(WAL_PATH);
+        let wal = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(wal_path)?;
+        Ok(Self {
             memtable: Memtable::new(MEMTABLE_MAX_SIZE),
             sstables: Vec::new(),
             data_dir,
-        }
+            wal,
+        })
     }
 
     pub fn new(data_dir: String) -> Result<Self, io::Error> {
         let heap_path = Path::new(&data_dir).join(Path::new(HEAP_DIR));
         let sparse_index_path = Path::new(&data_dir).join(Path::new(SPARSE_INDEX_DIR));
 
+        let wal_path = Path::new(&data_dir).join(WAL_PATH);
+        let mut wal = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(wal_path)?;
+
+        let memtable = Memtable::from_wal(&mut wal, MEMTABLE_MAX_SIZE)?;
         Ok(Self {
-            memtable: Memtable::new(MEMTABLE_MAX_SIZE),
+            memtable,
             sstables: SSTable::from_data(&heap_path, &sparse_index_path)?,
             data_dir,
+            wal,
         })
     }
 
@@ -80,6 +98,9 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
     }
 
     pub fn put(&mut self, key: K, value: V) -> Result<Option<V>, io::Error> {
+        // Append insert into WAL
+        self.append_to_wal(key.clone(), Some(value.clone()))?;
+
         let val = self.memtable.put(key, value);
 
         if self.memtable.len() >= self.memtable.max_size {
@@ -90,17 +111,18 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
         Ok(val)
     }
 
-    pub fn delete(&mut self, key: K) -> Option<V> {
-        self.memtable.delete(key)
+    pub fn delete(&mut self, key: K) -> Result<Option<V>, io::Error> {
+        // Append insert into WAL
+        self.append_to_wal(key.clone(), None)?;
+
+        Ok(self.memtable.delete(key))
     }
 
-    pub fn clear(&mut self) -> Result<(), io::Error> {
-        self.sstables.push(self.flush()?);
-        self.memtable.clear();
-        Ok(())
+    pub fn clear(&mut self) {
+        self.memtable.clear()
     }
 
-    fn flush(&self) -> Result<SSTable<K, V>, io::Error> {
+    pub fn flush(&self) -> Result<SSTable<K, V>, io::Error> {
         let heap_path = Path::new(&self.data_dir)
             .join(Path::new(HEAP_DIR))
             .join(Path::new(&self.sstables.len().to_string()));
@@ -109,7 +131,28 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
             .join(Path::new(&self.sstables.len().to_string()));
 
         let iter: Peekable<Iter<K, Option<V>>> = self.memtable.map.iter().peekable();
+        self.wal.set_len(0)?;
+        self.wal.sync_all()?;
 
         SSTable::from_iter(&heap_path, &sparse_index_path, iter)
+    }
+
+    fn append_to_wal(&mut self, key: K, value: Option<V>) -> Result<(), io::Error> {
+        let mut buf = Vec::new();
+
+        buf.extend(key.bytes_len().to_le_bytes());
+        buf.extend(key.serialize());
+        if let Some(v) = value {
+            buf.extend(v.bytes_len().to_le_bytes());
+            buf.extend(v.serialize());
+        } else {
+            buf.extend(0_usize.to_le_bytes());
+        }
+
+        self.wal.write_all(buf.as_slice())?;
+        // Commented out for now
+        // self.wal.sync_all()?; 
+
+        Ok(())
     }
 }

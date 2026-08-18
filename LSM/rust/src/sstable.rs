@@ -7,9 +7,7 @@ use std::{fs::File, marker::PhantomData};
 
 use zstd::DEFAULT_COMPRESSION_LEVEL;
 
-use crate::lsm::MEMTABLE_MAX_SIZE;
-
-const SPARSITY: usize = MEMTABLE_MAX_SIZE / 100;
+const SPARSITY: usize = 100;
 
 pub struct SparseIndex<K: Ord + ToBytes> {
     sparse_keys: Vec<K>,
@@ -74,31 +72,58 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         buf
     }
 
-    pub fn from_buf(buf: Vec<u8>) -> Self {
+    pub fn from_buf(buf: Vec<u8>) -> Result<Self, io::Error> {
         let mut sparse_keys = Vec::new();
         let mut sparse_offsets = vec![0];
 
+        // Errors in this loop are there to ensure parsing ends when corrupted data
+        // is encountered. corrupted data may arise on a write which was interrupted
+        // due to a crash
         let mut buf_iter = buf.into_iter();
         let keys_len_bytes: Vec<u8> = buf_iter.by_ref().take(size_of::<usize>()).collect();
+        if keys_len_bytes.len() != size_of::<usize>() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "SSTableEntry disk data for keys may be corrupted",
+            ));
+        }
         let keys_len = usize::from_le_bytes(keys_len_bytes.try_into().unwrap());
         for _ in 0..keys_len {
             let key_len_bytes: Vec<u8> = buf_iter.by_ref().take(size_of::<usize>()).collect();
+            if key_len_bytes.len() != size_of::<usize>() {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "SSTableEntry disk data for keys may be corrupted",
+                ));
+            }
             let key_len = usize::from_le_bytes(key_len_bytes.try_into().unwrap());
             let key_bytes: Vec<u8> = buf_iter.by_ref().take(key_len).collect();
+            if key_bytes.len() != key_len {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "SSTableEntry disk data for keys may be corrupted",
+                ));
+            }
             let key = K::deserialize(&key_bytes);
 
             sparse_keys.push(key);
         }
 
         while let Ok(chunk) = buf_iter.next_chunk::<{ size_of::<u64>() }>() {
+            if chunk.len() != size_of::<u64>() {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "SSTableEntry disk data for offsets may be corrupted",
+                ));
+            }
             let offset = u64::from_le_bytes(chunk);
             sparse_offsets.push(offset);
         }
 
-        Self {
+        Ok(Self {
             sparse_keys,
             sparse_offsets,
-        }
+        })
     }
 }
 
@@ -115,19 +140,35 @@ pub struct SSTableEntry<K: Ord + ToBytes, V: ToBytes> {
 impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
     // layout in buffer should be:
     // key_len , key bytes, value_len, value_bytes
+
+    // Breaks in this loop are there to ensure parsing ends when corrupted data
+    // is encountered. corrupted data may arise on a write which was interrupted
+    // due to a crash
     pub fn from_buf(buf: Vec<u8>) -> Self {
         let mut bytes_iter = buf.into_iter();
 
         let mut key_value_pairs = Vec::new();
         while let Ok(len_bytes) = bytes_iter.next_chunk::<{ size_of::<usize>() }>() {
+            if len_bytes.len() != size_of::<usize>() {
+                break;
+            }
             let key_len = usize::from_le_bytes(len_bytes);
             let key_bytes: Vec<u8> = bytes_iter.by_ref().take(key_len).collect();
+            if key_bytes.len() != key_len {
+                break;
+            }
             let key = K::deserialize(&key_bytes.to_vec());
 
             let len_bytes: Vec<u8> = bytes_iter.by_ref().take(size_of::<usize>()).collect();
+            if len_bytes.len() != size_of::<usize>() {
+                break;
+            }
             let value_len = usize::from_le_bytes(len_bytes.try_into().unwrap());
             if value_len > 0 {
                 let value_bytes: Vec<u8> = bytes_iter.by_ref().take(value_len).collect();
+                if value_bytes.len() != value_len {
+                    break;
+                }
                 let value = V::deserialize(&value_bytes.to_vec());
 
                 key_value_pairs.push((key, Some(value)));
@@ -197,7 +238,8 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
         Ok(sstable_entry
             .into_iter()
             .find(|(k, _)| k == key)
-            .map(|(_, v)| v).and_then(|v| v))
+            .map(|(_, v)| v)
+            .and_then(|v| v))
     }
 
     pub fn from_iter(
@@ -264,7 +306,8 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
             }
         }
 
-        let mut sstables: Vec<Option<SSTable<K, V>>> = std::iter::repeat_with(|| None).take(count).collect();
+        let mut sstables: Vec<Option<SSTable<K, V>>> =
+            std::iter::repeat_with(|| None).take(count).collect();
         for s_entry in sparse_index_dir {
             let s_entry = s_entry?;
             let s_path = s_entry.path();
@@ -274,7 +317,7 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
                 let mut s_compressed_buf = Vec::new();
                 s_file.read_to_end(&mut s_compressed_buf)?;
                 let s_buf = zstd::decode_all(s_compressed_buf.as_slice())?;
-                let sparse_index: SparseIndex<K> = SparseIndex::from_buf(s_buf);
+                let sparse_index: SparseIndex<K> = SparseIndex::from_buf(s_buf)?;
 
                 if let Some((num_name, Some(h_path))) = s_entry
                     .file_name()
@@ -282,10 +325,13 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes> SSTable<K, V> {
                     .and_then(|name| name.parse::<usize>().ok())
                     .and_then(|num_name| map.get_mut(num_name).map(|h| (num_name, h)))
                 {
-                    sstables.insert(num_name, Some(SSTable::new(
-                        sparse_index,
-                        h_path.to_string_lossy().into_owned(),
-                    )));
+                    sstables.insert(
+                        num_name,
+                        Some(SSTable::new(
+                            sparse_index,
+                            h_path.to_string_lossy().into_owned(),
+                        )),
+                    );
                 }
             }
         }
