@@ -15,6 +15,7 @@ pub struct TestDir {
     base: PathBuf,
     pub heap_path: PathBuf,
     pub sparse_index_path: PathBuf,
+    pub bloom_path: PathBuf,
 }
 
 #[allow(dead_code)]
@@ -29,14 +30,17 @@ impl TestDir {
         let base = std::env::temp_dir().join(format!("{prefix}_{nanos}_{count}"));
         let heap_path = base.join("heap");
         let sparse_index_path = base.join("sparse_index");
+        let bloom_path = base.join("bloom");
 
         fs::create_dir_all(&heap_path).expect("failed to create test heap dir");
         fs::create_dir_all(&sparse_index_path).expect("failed to create test sparse_index dir");
+        fs::create_dir_all(&bloom_path).expect("failed to create test bloom dir");
 
         Self {
             base,
             heap_path,
             sparse_index_path,
+            bloom_path,
         }
     }
 

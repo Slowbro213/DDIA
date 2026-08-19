@@ -1,6 +1,7 @@
 use std::{
     collections::btree_map::Iter,
     fs::{File, OpenOptions},
+    hash::Hash,
     io::{self, Write},
     iter::Peekable,
     path::Path,
@@ -37,10 +38,11 @@ impl ToBytes for String {
 
 const HEAP_DIR: &str = "heap";
 const SPARSE_INDEX_DIR: &str = "sparse_index";
+const BLOOM_DIR: &str = "bloom";
 const WAL_PATH: &str = "wal.txt";
 const MEMTABLE_MAX_SIZE: usize = 10000;
 
-pub struct LSM<K: Ord + ToBytes, V: ToBytes + Clone> {
+pub struct LSM<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> {
     memtable: Memtable<K, V>,
     sstables: Vec<SSTable<K, V>>,
     wal: File,
@@ -48,7 +50,7 @@ pub struct LSM<K: Ord + ToBytes, V: ToBytes + Clone> {
     data_dir: String,
 }
 
-impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
+impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
     pub fn new_empty(data_dir: String) -> Result<Self, io::Error> {
         let wal_path = Path::new(&data_dir).join(WAL_PATH);
         let wal = OpenOptions::new()
@@ -66,6 +68,7 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
     pub fn new(data_dir: String) -> Result<Self, io::Error> {
         let heap_path = Path::new(&data_dir).join(Path::new(HEAP_DIR));
         let sparse_index_path = Path::new(&data_dir).join(Path::new(SPARSE_INDEX_DIR));
+        let bloom_path = Path::new(&data_dir).join(Path::new(BLOOM_DIR));
 
         let wal_path = Path::new(&data_dir).join(WAL_PATH);
         let mut wal = OpenOptions::new()
@@ -77,7 +80,7 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
         let memtable = Memtable::from_wal(&mut wal, MEMTABLE_MAX_SIZE)?;
         Ok(Self {
             memtable,
-            sstables: SSTable::from_data(&heap_path, &sparse_index_path)?,
+            sstables: SSTable::from_data(&heap_path, &sparse_index_path, &bloom_path)?,
             data_dir,
             wal,
         })
@@ -129,12 +132,15 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
         let sparse_index_path = Path::new(&self.data_dir)
             .join(Path::new(SPARSE_INDEX_DIR))
             .join(Path::new(&self.sstables.len().to_string()));
+        let bloom_path = Path::new(&self.data_dir)
+            .join(Path::new(BLOOM_DIR))
+            .join(Path::new(&self.sstables.len().to_string()));
 
         let iter: Peekable<Iter<K, Option<V>>> = self.memtable.map.iter().peekable();
         self.wal.set_len(0)?;
         self.wal.sync_all()?;
 
-        SSTable::from_iter(&heap_path, &sparse_index_path, iter)
+        SSTable::from_iter(&heap_path, &sparse_index_path, &bloom_path, iter)
     }
 
     fn append_to_wal(&mut self, key: K, value: Option<V>) -> Result<(), io::Error> {
@@ -151,7 +157,7 @@ impl<K: Ord + ToBytes + Clone, V: ToBytes + Clone> LSM<K, V> {
 
         self.wal.write_all(buf.as_slice())?;
         // Commented out for now
-        // self.wal.sync_all()?; 
+        // self.wal.sync_all()?;
 
         Ok(())
     }

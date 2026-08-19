@@ -9,6 +9,7 @@ fn search() {
     let test_dir = common::TestDir::new("data_sstable_search");
     let heap_path = test_dir.heap_path.join("0");
     let sparse_index_path = test_dir.sparse_index_path.join("0");
+    let bloom_path = test_dir.bloom_path.join("0");
 
     let mut pairs = Vec::new();
     for i in 0..1000 {
@@ -21,7 +22,7 @@ fn search() {
     }
 
     let sstable =
-        SSTable::from_iter(&heap_path, &sparse_index_path, map.iter().peekable()).unwrap();
+        SSTable::from_iter(&heap_path, &sparse_index_path, &bloom_path, map.iter().peekable()).unwrap();
     for (k, v) in pairs.clone() {
         match sstable.get(&k) {
             Ok(result) => match result {

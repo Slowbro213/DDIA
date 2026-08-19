@@ -1,4 +1,4 @@
-use lsm::sstable::SparseIndex;
+use lsm::sparse_index::SparseIndex;
 
 #[test]
 fn get_offset() {
