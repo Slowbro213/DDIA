@@ -218,15 +218,39 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
 
         let mut offset = 0;
         for sstable in sstables {
-            bloom.extend(sstable.bloom.iter());
             for (key, (start, end)) in sstable.index {
                 let mut file = sstable.heap.try_clone()?;
 
                 file.seek(SeekFrom::Start(start))?;
                 let mut buf = vec![0u8; (end - start) as usize];
                 file.read_exact(&mut buf)?;
-                offset += buf.len();
-                heap_file.write_all(&buf);
+                let data = zstd::decode_all(buf.as_slice())?;
+                let sstable_entry: SSTableEntry<K, V> = SSTableEntry::from_buf(data);
+                let iter = sstable_entry.into_iter();
+
+                for (key, value) in sstable_entry {
+                    let mut pairs: Vec<(&K, &Option<V>)> = Vec::with_capacity(SPARSITY);
+                    for _ in 0..SPARSITY {
+                        match iter.next() {
+                            Some(pair) => {
+                                pairs.push((&pair.0,&pair.1));
+                                bloom.insert(&pair.0);
+                            }
+                            None => break,
+                        }
+                    }
+                    let buf = SSTableEntry::to_buf(&pairs);
+                    let compressed_buf =
+                        zstd::encode_all(buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
+                    heap_file.write_all(compressed_buf.as_slice())?;
+                    if let Some(first_pair) = pairs.first()
+                    {
+                        sparse_index.add_pair(
+                            first_pair.0.clone(),
+                            offset + compressed_buf.len() as u64,
+                        );
+                    }
+                }
 
                 sparse_keys.push(key);
                 sparse_offsets.push(offset);
