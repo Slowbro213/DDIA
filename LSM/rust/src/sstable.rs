@@ -38,7 +38,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
         }
     }
 
-    pub fn get(&self, key: &K) -> Result<Option<V>, io::Error> {
+    pub fn get(&self, key: &K) -> Result<Option<Option<V>>, io::Error> {
         if !self.bloom.contains(key) {
             return Ok(None);
         }
@@ -56,11 +56,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
         let data = zstd::decode_all(buf.as_slice())?;
         let sstable_entry: SSTableEntry<K, V> = SSTableEntry::from_buf(data);
 
-        Ok(sstable_entry
-            .into_iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v)
-            .and_then(|v| v))
+        Ok(sstable_entry.take(key))
     }
 
     pub fn from_iter(
@@ -194,5 +190,49 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
         }
 
         Ok(sstables.into_iter().flatten().collect())
+    }
+
+    pub fn compact(
+        heap_path: &Path,
+        sparse_index_path: &Path,
+        bloom_path: &Path,
+        sstables: &mut Vec<Self>,
+    ) -> Result<(), io::Error> {
+        let mut len = 0;
+
+        for sstable in &mut *sstables {
+            len += sstable.index.len();
+        }
+
+        let mut heap_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(heap_path)?;
+
+        let mut sparse_keys = Vec::with_capacity(len);
+        let mut sparse_offsets = Vec::with_capacity(len + 1);
+        sparse_offsets.push(0);
+        let mut bloom = AtomicBloomFilter::with_false_pos(0.01).expected_items(len);
+
+        let mut offset = 0;
+        for sstable in sstables {
+            bloom.extend(sstable.bloom.iter());
+            for (key, (start, end)) in sstable.index {
+                let mut file = sstable.heap.try_clone()?;
+
+                file.seek(SeekFrom::Start(start))?;
+                let mut buf = vec![0u8; (end - start) as usize];
+                file.read_exact(&mut buf)?;
+                offset += buf.len();
+                heap_file.write_all(&buf);
+
+                sparse_keys.push(key);
+                sparse_offsets.push(offset);
+            }
+        }
+
+        Ok(())
     }
 }

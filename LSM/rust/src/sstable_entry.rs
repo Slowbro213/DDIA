@@ -1,10 +1,26 @@
+use std::{iter::Zip, vec::IntoIter};
+
 use crate::sstable::ToBytes;
 
 pub struct SSTableEntry<K: Ord + ToBytes, V: ToBytes> {
-    key_value_pairs: Vec<(K, Option<V>)>,
+    keys: Vec<K>,
+    values: Vec<Option<V>>,
+}
+
+impl<K: Ord + ToBytes, V: ToBytes> IntoIterator for SSTableEntry<K,V> {
+    type Item = (K,Option<V>);
+    type IntoIter = Zip<IntoIter<K>,IntoIter<Option<V>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.keys.into_iter().zip(self.values.into_iter())
+    }
 }
 
 impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
+    pub fn take(mut self, key: &K) -> Option<Option<V>> {
+        Some(self.values.swap_remove(self.keys.binary_search(key).ok()?))
+    }
+
     // layout in buffer should be:
     // key_len , key bytes, value_len, value_bytes
 
@@ -14,7 +30,8 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
     pub fn from_buf(buf: Vec<u8>) -> Self {
         let mut bytes_iter = buf.into_iter();
 
-        let mut key_value_pairs = Vec::new();
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
         while let Ok(len_bytes) = bytes_iter.next_chunk::<{ size_of::<usize>() }>() {
             if len_bytes.len() != size_of::<usize>() {
                 break;
@@ -38,13 +55,15 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
                 }
                 let value = V::deserialize(&value_bytes.to_vec());
 
-                key_value_pairs.push((key, Some(value)));
+                keys.push(key);
+                values.push(Some(value));
             } else {
-                key_value_pairs.push((key, None));
+                keys.push(key);
+                values.push(None);
             }
         }
 
-        Self { key_value_pairs }
+        Self { keys, values }
     }
 
     pub fn to_buf(pairs: &Vec<(&K, &Option<V>)>) -> Vec<u8> {
@@ -61,14 +80,5 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
             }
         }
         buf
-    }
-}
-
-impl<K: Ord + ToBytes, V: ToBytes> IntoIterator for SSTableEntry<K, V> {
-    type Item = (K, Option<V>);
-    type IntoIter = std::vec::IntoIter<(K, Option<V>)>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.key_value_pairs.into_iter()
     }
 }

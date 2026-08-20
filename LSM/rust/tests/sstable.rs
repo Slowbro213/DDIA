@@ -26,7 +26,7 @@ fn search() {
     for (k, v) in pairs.clone() {
         match sstable.get(&k) {
             Ok(result) => match result {
-                Some(value) => assert_eq!(v, value),
+                Some(value) => assert_eq!(v, value.expect("value should have been found")),
                 None => panic!("SSTable returned None when it should have returned Some"),
             },
             Err(err) => panic!("{err}"),

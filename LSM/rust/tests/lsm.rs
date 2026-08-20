@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use lsm::lsm::LSM;
 mod common;
 
@@ -99,18 +101,18 @@ fn basic_deleting() {
         pairs.push((format!("key{}", i), format!("value{}", i)));
     }
 
-    let mut pairs_to_delete = Vec::new();
+    let mut pairs_to_delete = HashSet::new();
 
     for i in 0..10000 {
-        pairs_to_delete.push((format!("key{}", i), format!("value{}", i)));
+        pairs_to_delete.insert((format!("key{}", i), format!("value{}", i)));
     }
 
     for i in 20000..30000 {
-        pairs_to_delete.push((format!("key{}", i), format!("value{}", i)));
+        pairs_to_delete.insert((format!("key{}", i), format!("value{}", i)));
     }
 
     for i in 70000..80000 {
-        pairs_to_delete.push((format!("key{}", i), format!("value{}", i)));
+        pairs_to_delete.insert((format!("key{}", i), format!("value{}", i)));
     }
 
     // Put them all

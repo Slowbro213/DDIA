@@ -94,7 +94,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
         // Iterate from latest to oldest
         for sstable in self.sstables.iter().rev() {
             if let Some(value) = sstable.get(key)? {
-                return Ok(Some(value));
+                return Ok(value);
             };
         }
         Ok(None)

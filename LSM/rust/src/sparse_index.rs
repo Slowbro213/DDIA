@@ -123,3 +123,37 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         })
     }
 }
+
+impl<K: Ord + ToBytes> IntoIterator for SparseIndex<K> {
+    type Item = (K, (u64, u64));
+    type IntoIter = IntoIter<K>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter {
+            index: 0,
+            sparse_keys: self.sparse_keys.into_iter(),
+            sparse_offsets: self.sparse_offsets,
+        }
+    }
+}
+
+pub struct IntoIter<K: Ord + ToBytes> {
+    index: usize,
+    sparse_keys: std::vec::IntoIter<K>,
+    sparse_offsets: Vec<u64>,
+}
+
+impl<K: Ord + ToBytes> Iterator for IntoIter<K> {
+    type Item = (K, (u64, u64));
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.index += 1;
+        Some((
+            self.sparse_keys.next()?,
+            (
+                self.sparse_offsets[self.index],
+                self.sparse_offsets[self.index + 1],
+            ),
+        ))
+    }
+}
