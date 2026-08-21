@@ -10,7 +10,7 @@ fn basic_usage() {
 
     let mut pairs = Vec::new();
 
-    for i in 0..100000 {
+    for i in 0..1000000 {
         pairs.push((i * 2, i * 2 + 1));
     }
 
@@ -37,7 +37,7 @@ fn string_usage() {
 
     let mut pairs = Vec::new();
 
-    for i in 0..100000 {
+    for i in 0..1000000 {
         pairs.push((format!("key{}", i), format!("value{}", i)));
     }
 
@@ -65,7 +65,7 @@ fn writes_persist_and_are_searchable() {
     let mut pairs = Vec::new();
 
     // -1 so that at least one entry is in the memtable
-    for i in 0..(100000-100) {
+    for i in 0..(1000000-100) {
         pairs.push((format!("key{}", i), format!("value{}", i)));
     }
 
@@ -97,21 +97,21 @@ fn basic_deleting() {
 
     let mut pairs = Vec::new();
 
-    for i in 0..100000 {
+    for i in 0..1000000 {
         pairs.push((format!("key{}", i), format!("value{}", i)));
     }
 
     let mut pairs_to_delete = HashSet::new();
 
-    for i in 0..10000 {
+    for i in 0..100000 {
         pairs_to_delete.insert((format!("key{}", i), format!("value{}", i)));
     }
 
-    for i in 20000..30000 {
+    for i in 200000..300000 {
         pairs_to_delete.insert((format!("key{}", i), format!("value{}", i)));
     }
 
-    for i in 70000..80000 {
+    for i in 700000..800000 {
         pairs_to_delete.insert((format!("key{}", i), format!("value{}", i)));
     }
 

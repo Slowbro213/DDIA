@@ -46,6 +46,7 @@ const SSTABLES_COMPACTION_TRIGGER: usize = 50;
 pub struct LSM<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> {
     memtable: Memtable<K, V>,
     sstables: Vec<SSTable<K, V>>,
+    compactions: usize,
     wal: File,
 
     data_dir: String,
@@ -62,6 +63,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
             memtable: Memtable::new(MEMTABLE_MAX_SIZE),
             sstables: Vec::new(),
             data_dir,
+            compactions: 0,
             wal,
         })
     }
@@ -83,6 +85,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
             memtable,
             sstables: SSTable::from_data(&heap_path, &sparse_index_path, &bloom_path)?,
             data_dir,
+            compactions: 0,
             wal,
         })
     }
@@ -111,7 +114,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
             self.sstables.push(self.flush()?);
             self.memtable.clear();
             if self.sstables.len() >= SSTABLES_COMPACTION_TRIGGER {
-                let name = self.sstables.len().to_string();
+                let name = (self.sstables.len() + self.compactions + SSTABLES_COMPACTION_TRIGGER).to_string();
                 let heap_dir = Path::new(&self.data_dir).join(Path::new(HEAP_DIR));
                 let sparse_index_dir = Path::new(&self.data_dir).join(Path::new(SPARSE_INDEX_DIR));
                 let bloom_dir = Path::new(&self.data_dir).join(Path::new(BLOOM_DIR));
@@ -130,6 +133,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
                 clean_dir_except(&heap_dir, &heap_path)?;
                 clean_dir_except(&sparse_index_dir, &sparse_index_path)?;
                 clean_dir_except(&bloom_dir, &bloom_path)?;
+                self.compactions += 1;
             }
         }
 

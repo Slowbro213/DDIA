@@ -270,7 +270,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
             }
             pairs.push(pair);
 
-            if pairs.len() == SPARSITY {
+            if pairs.len() == SPARSITY || pq.len() == 0 {
                 let refs_to_pairs = pairs.iter().map(|(x, y)| (x, y)).collect();
                 let buf = SSTableEntry::to_buf(&refs_to_pairs);
                 let compressed_buf = zstd::encode_all(buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
