@@ -103,7 +103,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
 
     pub fn put(&mut self, key: K, value: V) -> Result<Option<V>, io::Error> {
         // Append insert into WAL
-        self.append_to_wal(key.clone(), Some(value.clone()))?;
+        self.append_to_wal(&key, Some(&value))?;
 
         let val = self.memtable.put(key, value);
 
@@ -138,7 +138,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
 
     pub fn delete(&mut self, key: K) -> Result<Option<V>, io::Error> {
         // Append insert into WAL
-        self.append_to_wal(key.clone(), None)?;
+        self.append_to_wal(&key, None)?;
 
         Ok(self.memtable.delete(key))
     }
@@ -166,7 +166,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
         SSTable::from_iter(&heap_path, &sparse_index_path, &bloom_path, iter)
     }
 
-    fn append_to_wal(&mut self, key: K, value: Option<V>) -> Result<(), io::Error> {
+    fn append_to_wal(&mut self, key: &K, value: Option<&V>) -> Result<(), io::Error> {
         let mut buf = Vec::new();
 
         buf.extend(key.bytes_len().to_le_bytes());

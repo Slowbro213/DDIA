@@ -81,9 +81,13 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
 
         while iter.peek().is_some() {
             let mut pairs: Vec<(&K, &Option<V>)> = Vec::with_capacity(SPARSITY);
-            for _ in 0..SPARSITY {
+            let mut first_key: Option<K> = None;
+            for i in 0..SPARSITY {
                 match iter.next() {
                     Some(pair) => {
+                        if i == 0 {
+                            first_key = Some(pair.0.clone());
+                        }
                         pairs.push(pair);
                         bloom.insert(pair.0);
                     }
@@ -93,9 +97,10 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
             let buf = SSTableEntry::to_buf(&pairs);
             let compressed_buf = zstd::encode_all(buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
             heap_file.write_all(compressed_buf.as_slice())?;
-            let (key, _) = pairs.remove(0);
-            if let Some(last_offset) = sparse_index.last_offset() {
-                sparse_index.add_pair(key.clone(), *last_offset + compressed_buf.len() as u64);
+            if let Some(key) = first_key
+                && let Some(last_offset) = sparse_index.last_offset()
+            {
+                sparse_index.add_pair(key, *last_offset + compressed_buf.len() as u64);
             }
         }
 
@@ -233,6 +238,7 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
         }
 
         let mut pairs: Vec<(K, Option<V>)> = Vec::with_capacity(SPARSITY);
+        let mut first_key: Option<K> = None;
         loop {
             // get the sstable iter with the next smallest key
 
@@ -259,6 +265,9 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
             }
 
             bloom.insert(&pair.0);
+            if pairs.len() == 0 {
+                first_key = Some(pair.0.clone());
+            }
             pairs.push(pair);
 
             if pairs.len() == SPARSITY {
@@ -267,11 +276,13 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
                 let compressed_buf = zstd::encode_all(buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
                 heap_file.write_all(compressed_buf.as_slice())?;
 
-                let (key, _) = pairs.remove(0);
-                offset += compressed_buf.len() as u64;
-                sparse_index.add_pair(key, offset);
+                if let Some(key) = first_key {
+                    offset += compressed_buf.len() as u64;
+                    sparse_index.add_pair(key, offset);
+                }
 
                 pairs.clear();
+                first_key = None;
             }
         }
 

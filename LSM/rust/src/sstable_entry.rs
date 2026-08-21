@@ -7,9 +7,9 @@ pub struct SSTableEntry<K: Ord + ToBytes, V: ToBytes> {
     values: Vec<Option<V>>,
 }
 
-impl<K: Ord + ToBytes, V: ToBytes> IntoIterator for SSTableEntry<K,V> {
-    type Item = (K,Option<V>);
-    type IntoIter = Zip<IntoIter<K>,IntoIter<Option<V>>>;
+impl<K: Ord + ToBytes, V: ToBytes> IntoIterator for SSTableEntry<K, V> {
+    type Item = (K, Option<V>);
+    type IntoIter = Zip<IntoIter<K>, IntoIter<Option<V>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.keys.into_iter().zip(self.values.into_iter())
@@ -41,7 +41,7 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
             if key_bytes.len() != key_len {
                 break;
             }
-            let key = K::deserialize(&key_bytes.to_vec());
+            let key = K::deserialize(&key_bytes);
 
             let len_bytes: Vec<u8> = bytes_iter.by_ref().take(size_of::<usize>()).collect();
             if len_bytes.len() != size_of::<usize>() {
@@ -53,7 +53,7 @@ impl<K: Ord + ToBytes, V: ToBytes> SSTableEntry<K, V> {
                 if value_bytes.len() != value_len {
                     break;
                 }
-                let value = V::deserialize(&value_bytes.to_vec());
+                let value = V::deserialize(&value_bytes);
 
                 keys.push(key);
                 values.push(Some(value));

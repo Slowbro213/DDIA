@@ -43,7 +43,7 @@ impl<K: Ord + ToBytes, V: ToBytes + Clone> Memtable<K, V> {
             if key_bytes.len() != key_len {
                 break;
             }
-            let key = K::deserialize(&key_bytes.to_vec());
+            let key = K::deserialize(&key_bytes);
 
             let len_bytes: Vec<u8> = bytes_iter.by_ref().take(size_of::<usize>()).collect();
             if len_bytes.len() != size_of::<usize>() {
@@ -55,7 +55,7 @@ impl<K: Ord + ToBytes, V: ToBytes + Clone> Memtable<K, V> {
                 if value_bytes.len() != value_len {
                     break;
                 }
-                let value = V::deserialize(&value_bytes.to_vec());
+                let value = V::deserialize(&value_bytes);
 
                 map.insert(key, Some(value));
             } else {
