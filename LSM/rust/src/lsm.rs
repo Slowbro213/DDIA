@@ -41,7 +41,7 @@ const SPARSE_INDEX_DIR: &str = "sparse_index";
 const BLOOM_DIR: &str = "bloom";
 const WAL_PATH: &str = "wal.txt";
 const MEMTABLE_MAX_SIZE: usize = 10000;
-const SSTABLES_COMPACTION_TRIGGER: usize = 10;
+const SSTABLES_COMPACTION_TRIGGER: usize = 50;
 
 pub struct LSM<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> {
     memtable: Memtable<K, V>,
