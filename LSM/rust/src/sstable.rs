@@ -210,52 +210,59 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes> SSTable<K, V> {
             .create(true)
             .truncate(true)
             .open(heap_path)?;
+        let mut sparse_index_file = File::create(sparse_index_path)?;
+        let mut bloom_file = File::create(bloom_path)?;
 
-        let mut sparse_keys = Vec::with_capacity(len);
-        let mut sparse_offsets = Vec::with_capacity(len + 1);
-        sparse_offsets.push(0);
-        let mut bloom = AtomicBloomFilter::with_false_pos(0.01).expected_items(len);
+        let mut sparse_index = SparseIndex::with_capacity(len);
+        let bloom = AtomicBloomFilter::with_false_pos(0.01).expected_items(len);
 
         let mut offset = 0;
-        for sstable in sstables {
-            for (key, (start, end)) in sstable.index {
-                let mut file = sstable.heap.try_clone()?;
-
+        for sstable in &mut *sstables {
+            let mut file = sstable.heap.try_clone()?;
+            for (_, (start, end)) in std::mem::take(&mut sstable.index) {
                 file.seek(SeekFrom::Start(start))?;
                 let mut buf = vec![0u8; (end - start) as usize];
                 file.read_exact(&mut buf)?;
                 let data = zstd::decode_all(buf.as_slice())?;
                 let sstable_entry: SSTableEntry<K, V> = SSTableEntry::from_buf(data);
-                let iter = sstable_entry.into_iter();
+                let mut iter = sstable_entry.into_iter().peekable();
 
-                for (key, value) in sstable_entry {
-                    let mut pairs: Vec<(&K, &Option<V>)> = Vec::with_capacity(SPARSITY);
-                    for _ in 0..SPARSITY {
-                        match iter.next() {
-                            Some(pair) => {
-                                pairs.push((&pair.0,&pair.1));
-                                bloom.insert(&pair.0);
-                            }
-                            None => break,
+                while iter.peek().is_some() {
+                    let mut pairs: Vec<(K, Option<V>)> = Vec::with_capacity(SPARSITY);
+                    let mut actual_entries = 0;
+                    while actual_entries < SPARSITY
+                        && let Some(pair) = iter.next()
+                    {
+                        if let Some(_) = pair.1 {
+                            bloom.insert(&pair.0);
+                            pairs.push((pair.0, pair.1));
+                            actual_entries += 1;
                         }
                     }
-                    let buf = SSTableEntry::to_buf(&pairs);
+                    let refs: Vec<(&K, &Option<V>)> =
+                        pairs.iter().map(|pair| (&pair.0, &pair.1)).collect();
+                    let buf = SSTableEntry::to_buf(&refs);
                     let compressed_buf =
                         zstd::encode_all(buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
                     heap_file.write_all(compressed_buf.as_slice())?;
-                    if let Some(first_pair) = pairs.first()
-                    {
-                        sparse_index.add_pair(
-                            first_pair.0.clone(),
-                            offset + compressed_buf.len() as u64,
-                        );
+                    if let Some(first_pair) = pairs.first() {
+                        offset += compressed_buf.len();
+                        sparse_index.add_pair(first_pair.0.clone(), offset as u64);
                     }
                 }
-
-                sparse_keys.push(key);
-                sparse_offsets.push(offset);
             }
         }
+
+        let compressed_sparse_index_buf =
+            zstd::encode_all(sparse_index.to_buf().as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
+        sparse_index_file.write_all(&compressed_sparse_index_buf)?;
+
+        let bloom_buf = bincode::serialize(&bloom).expect("bloom serialization failed");
+        let compressed_bloom_buf =
+            zstd::encode_all(bloom_buf.as_slice(), DEFAULT_COMPRESSION_LEVEL)?;
+        bloom_file.write_all(&compressed_bloom_buf)?;
+        sstables.clear();
+        sstables.push(SSTable::new(sparse_index, bloom, heap_file));
 
         Ok(())
     }

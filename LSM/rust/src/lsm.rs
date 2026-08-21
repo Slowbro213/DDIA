@@ -1,6 +1,6 @@
 use std::{
     collections::btree_map::Iter,
-    fs::{File, OpenOptions},
+    fs::{self, File, OpenOptions},
     hash::Hash,
     io::{self, Write},
     iter::Peekable,
@@ -41,6 +41,7 @@ const SPARSE_INDEX_DIR: &str = "sparse_index";
 const BLOOM_DIR: &str = "bloom";
 const WAL_PATH: &str = "wal.txt";
 const MEMTABLE_MAX_SIZE: usize = 10000;
+const SSTABLES_COMPACTION_TRIGGER: usize = 10;
 
 pub struct LSM<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> {
     memtable: Memtable<K, V>,
@@ -109,6 +110,27 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
         if self.memtable.len() >= self.memtable.max_size {
             self.sstables.push(self.flush()?);
             self.memtable.clear();
+            if self.sstables.len() >= SSTABLES_COMPACTION_TRIGGER {
+                let name = self.sstables.len().to_string();
+                let heap_dir = Path::new(&self.data_dir).join(Path::new(HEAP_DIR));
+                let sparse_index_dir = Path::new(&self.data_dir).join(Path::new(SPARSE_INDEX_DIR));
+                let bloom_dir = Path::new(&self.data_dir).join(Path::new(BLOOM_DIR));
+
+                let heap_path = heap_dir.join(Path::new(&name));
+                let sparse_index_path = sparse_index_dir.join(Path::new(&name));
+                let bloom_path = bloom_dir.join(Path::new(&name));
+
+                SSTable::compact(
+                    &heap_path,
+                    &sparse_index_path,
+                    &bloom_path,
+                    &mut self.sstables,
+                )?;
+
+                clean_dir_except(&heap_dir, &heap_path)?;
+                clean_dir_except(&sparse_index_dir, &sparse_index_path)?;
+                clean_dir_except(&bloom_dir, &bloom_path)?;
+            }
         }
 
         Ok(val)
@@ -126,15 +148,16 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
     }
 
     pub fn flush(&self) -> Result<SSTable<K, V>, io::Error> {
+        let name = self.sstables.len().to_string();
         let heap_path = Path::new(&self.data_dir)
             .join(Path::new(HEAP_DIR))
-            .join(Path::new(&self.sstables.len().to_string()));
+            .join(Path::new(&name));
         let sparse_index_path = Path::new(&self.data_dir)
             .join(Path::new(SPARSE_INDEX_DIR))
-            .join(Path::new(&self.sstables.len().to_string()));
+            .join(Path::new(&name));
         let bloom_path = Path::new(&self.data_dir)
             .join(Path::new(BLOOM_DIR))
-            .join(Path::new(&self.sstables.len().to_string()));
+            .join(Path::new(&name));
 
         let iter: Peekable<Iter<K, Option<V>>> = self.memtable.map.iter().peekable();
         self.wal.set_len(0)?;
@@ -161,4 +184,16 @@ impl<K: Ord + ToBytes + Clone + Hash, V: ToBytes + Clone> LSM<K, V> {
 
         Ok(())
     }
+}
+
+fn clean_dir_except(dir: &Path, keep: &Path) -> io::Result<()> {
+    let keep_name = keep.file_name();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.file_name() != keep_name && path.is_file() {
+            fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }

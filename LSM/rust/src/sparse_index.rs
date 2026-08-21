@@ -22,6 +22,15 @@ impl<K: Ord + ToBytes> SparseIndex<K> {
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        let mut sparse_offsets = Vec::with_capacity(capacity + 1);
+        sparse_offsets.push(0);
+        Self {
+            sparse_keys: Vec::with_capacity(capacity),
+            sparse_offsets,
+        }
+    }
+
     pub fn add_pair(&mut self, key: K, offset: u64) {
         self.sparse_keys.push(key);
         self.sparse_offsets.push(offset);
@@ -147,13 +156,14 @@ impl<K: Ord + ToBytes> Iterator for IntoIter<K> {
     type Item = (K, (u64, u64));
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.index += 1;
-        Some((
+        let result = Some((
             self.sparse_keys.next()?,
             (
                 self.sparse_offsets[self.index],
                 self.sparse_offsets[self.index + 1],
             ),
-        ))
+        ));
+        self.index += 1;
+        result
     }
 }
